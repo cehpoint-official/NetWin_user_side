@@ -1,0 +1,98 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Documentation files (except README)
+*.md
+!README.md
+
+# Specific documentation files from git status
+STEP1_TASK_COMPLETION_REPORT.md
+STEP3_AUDIT_REPORT.md
+STEP_5_COMPLETION_SUMMARY.md
+VALIDATION_DEBUGGING_SETUP.md
+VALIDATION_REPORT.md
+ValidationAuditResults.md
+WALLET_SYSTEM_ANALYSIS_PROMPT.md
+netwin-wallet-implementation-plan.md
+registration_flow_analysis.md
+registration_flow_issues_log.md
+tournament-app-mvp-plan.md
+user_interaction_code_paths.md
+✅ High-Level Architecture.txt
+
+# Media files
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.mp4
+*.mov
+*.avi
+
+# Development and temporary files
+.kotlin/errors/
+bug_evidence/
+*.csv
+*.txt
+!*.md
+*.ps1
+*.py
+*.log
+
+# External projects (should be separate repos)
+netwin-tournaments-admin/
+netwin-tournaments-app-web/
+
+# App icons (should be in res/ directory)
+netwin_ic_launcher-*/
+netwin_ic_launcher_one-*/
+
+# Sensitive files
+rzp-key.csv
+*.key
+*.pem
+*.p12
+
+# Test files
+sampletournamentdata.txt
+state_persistence_test.ps1
+network_registration_test.py
+
+# Build and cache files
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE specific
+.idea/
+.idea/ChatHistory_schema_v2.xml
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary and reference files
+I'll scan the project to locate the refe.md
