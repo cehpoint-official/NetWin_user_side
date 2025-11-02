@@ -126,12 +126,12 @@ data class Tournament(
     fun toDomain(): DomainTournament {
         // Calculate start time; do not fabricate if missing
         val startTimeMs = startDate?.toDate()?.time ?: 0L
-        
+
         // Log the mapping for debugging
         android.util.Log.d("TournamentMapper", "Mapping tournament: $title")
         android.util.Log.d("TournamentMapper", "startDate: $startDate")
         android.util.Log.d("TournamentMapper", "startTimeMs: $startTimeMs (${java.util.Date(startTimeMs)})")
-        
+
         return DomainTournament(
             id = id,
             name = title,
@@ -252,6 +252,6 @@ fun DomainTournament.toData(): Tournament {
         killReward = killReward,
         roomId = roomId,
         roomPassword = roomPassword,
-        actualStartTime = if (actualStartTime != null) Timestamp(actualStartTime, 0) else null
+        actualStartTime = actualStartTime?.let { Timestamp(it, 0) }
     )
 }

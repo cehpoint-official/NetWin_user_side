@@ -16,6 +16,8 @@ firebaseFirestore = "26.0.1"
 firebaseStorageKtx = "21.0.2"
 foundation = "1.9.2"
 material3 = "1.4.0"
+common = "0.10.0"
+generativeai = "0.9.0"
 
 
 
@@ -44,6 +46,8 @@ firebase-firestore = { group = "com.google.firebase", name = "firebase-firestore
 firebase-storage-ktx = { group = "com.google.firebase", name = "firebase-storage-ktx", version.ref = "firebaseStorageKtx" }
 androidx-compose-foundation = { group = "androidx.compose.foundation", name = "foundation", version.ref = "foundation" }
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "material3" }
+common = { group = "com.google.ai.client.generativeai", name = "common", version.ref = "common" }
+generativeai = { group = "com.google.ai.client.generativeai", name = "generativeai", version.ref = "generativeai" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

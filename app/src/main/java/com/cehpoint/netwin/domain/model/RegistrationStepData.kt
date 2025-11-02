@@ -15,6 +15,7 @@ data class RegistrationStepData(
     val tournamentId: String = ""
 ) : Parcelable {
 
+
     /**
      * Validates the registration data for a specific step
      * @param step The registration step to validate

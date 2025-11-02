@@ -17,21 +17,21 @@ class TransactionViewModel @Inject constructor(
     private val transactionRepository: TransactionRepository,
     private val auth: FirebaseAuth
 ) : ViewModel() {
-    
+
     private val _transactions = MutableStateFlow<List<Transaction>>(emptyList())
     val transactions: StateFlow<List<Transaction>> = _transactions.asStateFlow()
-    
+
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
-    
+
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
-    
+
     fun loadTransactions(userId: String) {
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
-            
+
             try {
                 transactionRepository.getTransactionsByUser(userId)
                     .collect { transactionList ->
@@ -44,7 +44,7 @@ class TransactionViewModel @Inject constructor(
             }
         }
     }
-    
+
     fun refreshTransactions() {
         val currentUserId = auth.currentUser?.uid
         if (currentUserId != null) {

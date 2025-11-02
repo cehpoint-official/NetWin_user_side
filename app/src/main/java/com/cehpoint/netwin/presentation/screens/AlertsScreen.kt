@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -26,8 +25,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
+// Removed FilterChip imports
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
@@ -37,9 +35,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+// Removed remember, mutableStateOf, setValue imports as they are no longer needed
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,14 +51,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-// Add this enum for filter chips
-enum class AlertFilter(val displayName: String) {
-    ALL("All"),
-    SYSTEM("System"),
-    TOURNAMENT("Tournament"),
-    PAYMENT("Payment"),
-    WIN("Win")
-}
+// Removed AlertFilter enum
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,7 +62,7 @@ fun AlertsScreenUI(
     val alertsState by viewModel.alertsState.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
-    var selectedFilter by remember { mutableStateOf(AlertFilter.ALL) }
+    // Removed selectedFilter state
 
     Scaffold(
         topBar = {
@@ -94,26 +83,7 @@ fun AlertsScreenUI(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // Filter Chips Row
-            val filters = AlertFilter.values().toList()
-            LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp, horizontal = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(filters) { filter ->
-                    FilterChip(
-                        selected = selectedFilter == filter,
-                        onClick = { selectedFilter = filter },
-                        label = { Text(filter.displayName, color = if (selectedFilter == filter) Color.Black else Color.White) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Color.Cyan,
-                            containerColor = Color(0xFF23272F)
-                        )
-                    )
-                }
-            }
+            // Removed Filter Chips Row (LazyRow)
 
             // Alerts List
             if (isLoading) {
@@ -125,24 +95,21 @@ fun AlertsScreenUI(
                     Text(error ?: "Unknown error", color = Color.Red)
                 }
             } else {
-                val filteredAlerts = when (selectedFilter) {
-                    AlertFilter.ALL -> alertsState.alerts
-                    AlertFilter.SYSTEM -> alertsState.alerts.filter { it.type == AlertType.SYSTEM }
-                    AlertFilter.TOURNAMENT -> alertsState.alerts.filter { it.type == AlertType.TOURNAMENT }
-                    AlertFilter.PAYMENT -> alertsState.alerts.filter { it.type == AlertType.PAYMENT }
-                    AlertFilter.WIN -> alertsState.alerts.filter { it.type == AlertType.WIN }
-                }
-                if (filteredAlerts.isEmpty()) {
+                // Use alertsState.alerts directly
+                val allAlerts = alertsState.alerts
+                if (allAlerts.isEmpty()) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("No alerts", color = Color.Gray)
                     }
                 } else {
                     LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = 16.dp),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 8.dp), // Apply horizontal padding here
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp), // Add top padding
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(filteredAlerts) { alert ->
+                        items(allAlerts) { alert -> // Use allAlerts
                             AlertCard(alert)
                         }
                     }
@@ -156,8 +123,7 @@ fun AlertsScreenUI(
 fun AlertCard(alert: Alert) {
     Card(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp),
+            .fillMaxWidth(), // Removed horizontal padding from here
         colors = CardDefaults.cardColors(
             containerColor = if (alert.isRead) Color(0xFF23272F) else Color(0xFF2A2A2A)
         )

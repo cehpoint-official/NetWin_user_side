@@ -14,4 +14,4 @@ interface TransactionRepository {
     suspend fun getWalletBalance(userId: String): Flow<Double>
     suspend fun deposit(userId: String, amount: Double, paymentMethod: String): Result<String>
     suspend fun withdraw(userId: String, amount: Double, paymentMethod: String): Result<String>
-} 
+}

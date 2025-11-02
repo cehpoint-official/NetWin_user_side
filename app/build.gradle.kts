@@ -1,3 +1,15 @@
+import org.gradle.kotlin.dsl.androidTestImplementation
+import java.util.Properties
+import java.io.FileReader
+fun getLocalProperty(key: String): String {
+    val properties = Properties() // Now resolves due to import
+    val localPropertiesFile = project.rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        // Use FileReader or project.rootProject.file(...).reader()
+        properties.load(localPropertiesFile.reader())
+    }
+    return properties.getProperty(key) ?: ""
+}
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -23,6 +35,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
+            buildConfigField("String", "GEMINI_API_KEY", "\"${getLocalProperty("GEMINI_API_KEY")}\"")
         }
     }
 
@@ -73,7 +86,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.core:core-splashscreen:1.0.1")  // SplashScreen API
-    
+
     // Compose
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
@@ -84,16 +97,16 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose")
     implementation("androidx.navigation:navigation-compose")
-    
+
     // Navigation Serialization
     implementation("androidx.navigation:navigation-compose:2.9.5")
     implementation("androidx.navigation:navigation-runtime-ktx:2.9.5")
     implementation("androidx.navigation:navigation-common-ktx:2.9.1")
     implementation("androidx.navigation:navigation-ui-ktx:2.9.5")
-    
+
     // Kotlin Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
-    
+
     // Hilt
     implementation("com.google.dagger:hilt-android:2.57.1")
     implementation(libs.firebase.auth)
@@ -105,9 +118,10 @@ dependencies {
     implementation("com.google.firebase:firebase-appcheck-playintegrity:19.0.1")
     implementation("com.google.firebase:firebase-appcheck-debug:19.0.1")
     implementation(libs.androidx.compose.foundation)
+    implementation(libs.generativeai)
     ksp("com.google.dagger:hilt-android-compiler:2.57.1")
     implementation("androidx.hilt:hilt-navigation-compose:1.3.0")
-    
+
 //    // Firebase
 //    implementation(platform("com.google.firebase:firebase-bom:33.15.0"))
 //    implementation("com.google.firebase:firebase-auth-ktx")
@@ -119,9 +133,9 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
-    
-    
-    
+
+
+
     // Coil for image loading
     implementation("io.coil-kt:coil-compose:2.7.0")
 
@@ -131,7 +145,7 @@ dependencies {
     // Payment Gateways (Phase 2)
     implementation("com.razorpay:checkout:1.6.41")
     implementation("co.paystack.android:paystack:3.1.3")
-    
+
     // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
@@ -159,13 +173,23 @@ dependencies {
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.8.2")
     testImplementation("org.mockito.kotlin:mockito-kotlin:4.0.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.6.4")
-    
+
     // Android instrumentation test dependencies
     androidTestImplementation("com.google.truth:truth:1.1.3")
     androidTestImplementation("io.mockk:mockk-android:1.13.4")
     androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.6.4")
 
     implementation("androidx.core:core-splashscreen:1.0.1")
-
+    implementation("javax.inject:javax.inject:1")
     implementation("com.google.accompanist:accompanist-swiperefresh:0.36.0")
+    implementation("androidx.core:core-ktx:1.15.0")
+    // 1. Gemini SDK dependency (as you provided)
+    implementation("com.google.ai.client.generativeai:generativeai:0.8.0") // Or the latest version
+
+    // 2. Kotlinx Serialization for structured JSON output
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
+
+    // Kotlin extension for coroutines
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
+
 }

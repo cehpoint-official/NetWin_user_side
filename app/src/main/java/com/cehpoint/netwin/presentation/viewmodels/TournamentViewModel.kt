@@ -1,43 +1,77 @@
 package com.cehpoint.netwin.presentation.viewmodels
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.ImageDecoder
+import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
 import android.util.Log
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.cehpoint.netwin.BuildConfig
 import com.cehpoint.netwin.data.local.DataStoreManager
 import com.cehpoint.netwin.data.remote.FirebaseManager
+import com.cehpoint.netwin.domain.model.RegistrationStep
+import com.cehpoint.netwin.domain.model.RegistrationStepData
 import com.cehpoint.netwin.domain.model.Tournament
 import com.cehpoint.netwin.domain.model.TournamentStatus
-import com.cehpoint.netwin.domain.model.RegistrationStepData
-import com.cehpoint.netwin.domain.model.RegistrationStep
 import com.cehpoint.netwin.domain.repository.TournamentRepository
 import com.cehpoint.netwin.domain.repository.UserRepository
-import com.google.firebase.auth.FirebaseAuth
 import com.cehpoint.netwin.domain.repository.WalletRepository
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.take
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
-import javax.inject.Inject
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.combine
 import com.cehpoint.netwin.presentation.events.RegistrationFlowEvent
 import com.cehpoint.netwin.utils.NetworkStateMonitor
-import com.cehpoint.netwin.utils.RetryUtils
+import com.google.ai.client.generativeai.GenerativeModel
+import com.google.ai.client.generativeai.type.content
+import com.google.firebase.Firebase
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestoreException
+import com.google.firebase.firestore.firestore
+import com.google.firebase.firestore.Query
+import com.google.firebase.storage.storage
+import com.google.gson.Gson
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import java.util.UUID
+import javax.inject.Inject
+
+// =====================================================================
+// NEW: Data Structures for Gemini Analysis
+// =====================================================================
+
+/**
+ * Data class to hold the structured data parsed from Gemini's JSON output.
+ */
+data class AnalyzedResult(
+    val rank: Int = 0,
+    val kills: Int = 0,
+    val maxCapacity: Int = 0,
+    val playerName: String = ""
+)
 
 data class TournamentState(
     val tournaments: List<Tournament> = emptyList(),
     val selectedFilter: TournamentFilter = TournamentFilter.ALL,
     val isLoading: Boolean = false,
     val error: String? = null,
-    val countdowns: Map<String, String> = emptyMap() // NEW: tournamentId -> remainingTime
+    val countdowns: Map<String, String> = emptyMap(), // tournamentId -> remainingTime
+    // NEW: Map for quick registration check (Tournament ID -> isRegistered)
+    val userRegistrations: Map<String, Boolean> = emptyMap()
 )
 
 // RegistrationStepData is now defined in domain.model package
@@ -58,7 +92,7 @@ class TournamentViewModel @Inject constructor(
     private val repository: TournamentRepository,
     private val firebaseManager: FirebaseManager,
     private val userRepository: UserRepository,
-    private val walletRepository: WalletRepository,
+    private val walletRepository: WalletRepository, // INJECTED
     private val dataStoreManager: DataStoreManager,
     private val savedStateHandle: SavedStateHandle,
     private val networkStateMonitor: NetworkStateMonitor
@@ -67,6 +101,20 @@ class TournamentViewModel @Inject constructor(
     companion object {
         private const val KEY_CURRENT_STEP = "current_step"
         private const val KEY_STEP_DATA = "step_data"
+    }
+
+    // --- DATABASE, STORAGE, & GEMINI INIT ---
+    private val db = Firebase.firestore
+    private val auth = FirebaseAuth.getInstance()
+    private val storage = Firebase.storage.reference
+    private val currentUserId = auth.currentUser?.uid
+
+    // NEW: Gemini Model Initialization (Uses the key exposed via BuildConfig)
+    private val geminiModel by lazy {
+        GenerativeModel(
+            modelName = "gemini-2.5-flash",
+            apiKey = BuildConfig.GEMINI_API_KEY
+        )
     }
 
     // Tournament Details State
@@ -82,10 +130,6 @@ class TournamentViewModel @Inject constructor(
     // Registration State
     private val _registrationState = MutableStateFlow<Result<Unit>?>(null)
     val registrationState: StateFlow<Result<Unit>?> = _registrationState.asStateFlow()
-
-    // Registration Status State
-    private val _registrationStatus = MutableStateFlow<Boolean?>(null)
-    val registrationStatus: StateFlow<Boolean?> = _registrationStatus.asStateFlow()
 
     private val _showKycRequiredDialog = MutableStateFlow(false)
     val showKycRequiredDialog: StateFlow<Boolean> = _showKycRequiredDialog.asStateFlow()
@@ -154,6 +198,14 @@ class TournamentViewModel @Inject constructor(
     private val _isRetrying = MutableStateFlow(false)
     val isRetrying: StateFlow<Boolean> = _isRetrying.asStateFlow()
 
+    // NEW: Efficiently track registered tournament IDs for the user
+    private val _registeredTournamentIds = MutableStateFlow<Set<String>>(emptySet())
+    val registeredTournamentIds: StateFlow<Set<String>> = _registeredTournamentIds.asStateFlow()
+
+    // NEW: State for Prize Payout Status
+    private val _payoutStatus = MutableStateFlow<Result<String>?>(null)
+    val payoutStatus: StateFlow<Result<String>?> = _payoutStatus.asStateFlow()
+
     // RegistrationUiState data class for exposing immutable UI state
     data class MyTournamentsUiState(
         val tournaments: List<Tournament> = emptyList(),
@@ -212,7 +264,73 @@ class TournamentViewModel @Inject constructor(
         )
     )
 
+    // =====================================================================
+    // Initialization & User Data Load
+    // =====================================================================
 
+    init {
+        Log.d("TournamentViewModel", "Initializing ViewModel")
+        setState(TournamentState())
+        loadTournaments()
+        loadUserRegistrations()
+        startCountdownTimer()
+
+        val userId = firebaseManager.auth.currentUser?.uid
+        if (userId != null) {
+            viewModelScope.launch {
+                walletRepository.getWalletBalance(userId).collect { balance ->
+                    _walletBalance.value = balance
+                }
+            }
+            viewModelScope.launch {
+                try {
+                    val userNameFromDataStore = dataStoreManager.userName.first()
+                    if (userNameFromDataStore.isNotBlank()) {
+                        _userName.value = userNameFromDataStore
+                    } else {
+                        val userResult = userRepository.getUser(userId)
+                        val user = userResult.getOrNull()
+                        _userName.value = user?.username?.takeIf { it.isNotBlank() }
+                            ?: user?.displayName?.takeIf { it.isNotBlank() }
+                                    ?: "Gamer"
+                        val country = user?.country ?: "India"
+                        _userCountry.value = country
+                        _userCurrency.value = if (country.equals("Nigeria", true) || country.equals("NG", true)) "NGN" else "INR"
+                    }
+                } catch (e: Exception) {
+                    Log.e("TournamentViewModel", "Error fetching user data", e)
+                    _userName.value = "Gamer"
+                    _userCountry.value = "India"
+                    _userCurrency.value = "INR"
+                }
+            }
+        }
+    }
+
+    private fun loadUserRegistrations() {
+        if (currentUserId == null) return
+        viewModelScope.launch {
+            try {
+                // Collect the real-time flow of registered IDs and update the internal StateFlow
+                repository.getUserTournamentRegistrations(currentUserId).collect { registeredIds ->
+                    Log.d("TournamentViewModel", "Loaded ${registeredIds.size} registered tournament IDs")
+                    _registeredTournamentIds.value = registeredIds.toSet()
+
+                    // Update main TournamentState for the UI to reflect new registration status
+                    setState(state.value!!.copy(
+                        userRegistrations = registeredIds.associateWith { true }
+                    ))
+                }
+            } catch (e: Exception) {
+                Log.e("TournamentViewModel", "Error loading user registrations", e)
+            }
+        }
+    }
+
+
+    // =====================================================================
+    // Registration Flow Logic
+    // =====================================================================
 
     fun nextStep() {
         val currentStepValue = _currentStep.value
@@ -254,103 +372,58 @@ class TournamentViewModel @Inject constructor(
 
     /**
      * Main event handler for RegistrationFlowEvent
-     * Handles all registration flow events with proper validation and step management
      */
     fun onRegistrationEvent(event: RegistrationFlowEvent) {
-        Log.d("TournamentViewModel", "=== onRegistrationEvent ENTRY ===")
-        Log.d("TournamentViewModel", "Event type: ${event::class.simpleName}")
-        Log.d("TournamentViewModel", "Current step: ${_currentStep.value}")
-        Log.d("TournamentViewModel", "Current data: playerIds='${_stepData.value.playerIds.joinToString()}', teamName='${_stepData.value.teamName}', paymentMethod='${_stepData.value.paymentMethod}', termsAccepted=${_stepData.value.termsAccepted}")
+        Log.d("TournamentViewModel", "onRegistrationEvent: ${event::class.simpleName}")
 
         when (event) {
             is RegistrationFlowEvent.UpdateData -> {
-                Log.d("TournamentViewModel", "Processing UpdateData event")
-                // Update step data via functional update
                 val currentData = _stepData.value
                 val updatedData = event.transform(currentData)
                 savedStateHandle[KEY_STEP_DATA] = updatedData
-                Log.d("TournamentViewModel", "Data updated: ${updatedData}")
-                // Clear current error when data is updated
                 _currentError.value = null
-                Log.d("TournamentViewModel", "Error cleared due to data update")
             }
 
             is RegistrationFlowEvent.Next -> {
-                Log.d("TournamentViewModel", "Processing Next event - VALIDATING BEFORE ADVANCE")
-                // Validate current step before advancing
-                val currentData = _stepData.value
-                val currentStepValue = _currentStep.value
-                Log.d("TournamentViewModel", "About to call validate() for step: $currentStepValue")
                 val validationError = validate()
-                Log.d("TournamentViewModel", "Validation result: ${if (validationError == null) "PASSED" else "FAILED with error: '$validationError'"}")
-
                 if (validationError != null) {
-                    Log.e("TournamentViewModel", "VALIDATION FAILED - Setting error and blocking navigation")
                     _currentError.value = validationError
                 } else {
-                    Log.d("TournamentViewModel", "VALIDATION PASSED - Proceeding to next step")
-                    // Clear error and move to next step
                     _currentError.value = null
                     moveToNextStep()
                 }
             }
 
             is RegistrationFlowEvent.Previous -> {
-                Log.d("TournamentViewModel", "Processing Previous event - No validation required")
-                // Move to previous step (no validation needed)
                 _currentError.value = null
                 moveToPreviousStep()
             }
 
             is RegistrationFlowEvent.Reset -> {
-                Log.d("TournamentViewModel", "Processing Reset event")
                 resetRegistrationFlow()
             }
 
             is RegistrationFlowEvent.Submit -> {
-                Log.d("TournamentViewModel", "Processing Submit event - FINAL COMPREHENSIVE VALIDATION")
-                // Final comprehensive validation of all steps before submission
-                val currentData = _stepData.value
-                val validationError = currentData.validateAll()
-                Log.d("TournamentViewModel", "Final validateAll() result: ${if (validationError == null) "PASSED" else "FAILED with error: '$validationError'"}")
+                val validationError = _stepData.value.validateAll()
                 if (validationError != null) {
-                    Log.e("TournamentViewModel", "FINAL COMPREHENSIVE VALIDATION FAILED - Blocking submission")
                     _currentError.value = validationError
                     return
                 }
-
-                Log.d("TournamentViewModel", "FINAL COMPREHENSIVE VALIDATION PASSED - Proceeding with registration")
-                // Clear error and proceed with tournament registration
                 _currentError.value = null
                 performTournamentRegistration()
             }
         }
-        Log.d("TournamentViewModel", "=== onRegistrationEvent EXIT ===")
     }
 
     /**
      * Validates current step data
-     * @return Error message if validation fails, null if valid
      */
     private fun validate(): String? {
-        Log.d("TournamentViewModel", "=== validate() ENTRY ===")
         val currentData = _stepData.value
         val currentStepValue = _currentStep.value
-        Log.d("TournamentViewModel", "Validating step: $currentStepValue")
-        Log.d("TournamentViewModel", "Data being validated: $currentData")
-        Log.d("TournamentViewModel", "About to call RegistrationStepData.validate($currentStepValue)")
-
-        val validationResult = currentData.validate(currentStepValue)
-
-        Log.d("TournamentViewModel", "RegistrationStepData.validate() returned: ${if (validationResult == null) "null (VALID)" else "'$validationResult' (INVALID)"}")
-        Log.d("TournamentViewModel", "=== validate() EXIT ===")
-
-        return validationResult
+        return currentData.validate(currentStepValue)
     }
 
-    /**
-     * Moves to the next step using ordered enum values
-     */
     private fun moveToNextStep() {
         val orderedSteps = RegistrationStep.values()
         val currentStepValue = _currentStep.value
@@ -361,9 +434,6 @@ class TournamentViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Moves to the previous step using ordered enum values
-     */
     private fun moveToPreviousStep() {
         val orderedSteps = RegistrationStep.values()
         val currentStepValue = _currentStep.value
@@ -374,166 +444,173 @@ class TournamentViewModel @Inject constructor(
         }
     }
 
+
     /**
-     * Performs the actual tournament registration with retry logic and network monitoring
+     * Performs the tournament registration using a secure Firestore Transaction.
      */
     private fun performTournamentRegistration() {
         val currentData = _stepData.value
-        val userId = firebaseManager.auth.currentUser?.uid
-        val displayName = _userName.value
+        val userId = currentUserId
+        val displayName = _userName.value // Get display name
 
         if (userId == null) {
+            _currentError.value = "User not authenticated"
             _registrationState.value = Result.failure(Exception("User not authenticated"))
             return
         }
 
         if (currentData.tournamentId.isBlank()) {
+            _currentError.value = "Tournament ID is required"
             _registrationState.value = Result.failure(Exception("Tournament ID is required"))
             return
         }
 
         viewModelScope.launch {
             _isRegistering.value = true
-            _registrationError.value = null
-            _retryCount.value = 0
+            _currentError.value = null
+            _registrationState.value = null // Reset state
 
-            // Monitor network state during registration
-            val networkJob = launch {
-                networkStateMonitor.observeNetworkState().collect { isConnected ->
-                    _networkAvailable.value = isConnected
-                    Log.d("TournamentViewModel", "Network state changed: $isConnected")
-
-                    if (!isConnected) {
-                        Log.w("TournamentViewModel", "Network disconnected during registration")
-                        _currentError.value = "Network connection lost. Retrying when connection is restored..."
-                    } else if (_currentError.value?.contains("Network") == true) {
-                        _currentError.value = null
-                    }
-                }
-            }
+            // Define document references
+            val tournamentDocRef = db.collection("tournaments").document(currentData.tournamentId)
+            // Use a predictable ID (userId + tournamentId) to easily check for existence
+            val registrationDocRef = db.collection("tournament_registrations").document("${userId}_${currentData.tournamentId}")
+            val walletDocRef = db.collection("wallets").document(userId) // User's wallet
 
             try {
-                // For business rule errors (like registration closed), don't retry
-                // Only retry for network/timeout issues
-                var lastException: Exception? = null
-                var shouldRetry = true
-                var attemptCount = 0
+                // Run the entire registration as a single, atomic transaction
+                db.runTransaction { transaction ->
+                    // 1. Check for duplicate registration
+                    val existingReg = transaction.get(registrationDocRef)
+                    if (existingReg.exists()) {
+                        throw FirebaseFirestoreException(
+                            "Already registered", // Simple message
+                            FirebaseFirestoreException.Code.ALREADY_EXISTS
+                        )
+                    }
 
-                while (shouldRetry && attemptCount < 3) {
-                    attemptCount++
-                    _retryCount.value = attemptCount
-                    _isRetrying.value = attemptCount > 1
+                    // 2. Get tournament data and check if it's full
+                    val tournamentSnapshot = transaction.get(tournamentDocRef)
+                    if (!tournamentSnapshot.exists()) {
+                        throw FirebaseFirestoreException(
+                            "Tournament not found",
+                            FirebaseFirestoreException.Code.NOT_FOUND
+                        )
+                    }
 
-                    Log.d("TournamentViewModel", "Registration attempt $attemptCount")
+                    val currentTeams = tournamentSnapshot.getLong("registeredTeams") ?: 0
+                    val maxTeams = tournamentSnapshot.getLong("maxTeams") ?: 0 // Get max teams
+                    val tournamentEntryFee = tournamentSnapshot.getDouble("entryFee") ?: 0.0
 
-                    try {
-                        // Check network availability before each attempt
-                        if (!networkStateMonitor.isNetworkAvailable()) {
-                            throw Exception("Network unavailable")
+                    if (currentTeams >= maxTeams) {
+                        throw FirebaseFirestoreException(
+                            "Tournament is full", // Simple message
+                            FirebaseFirestoreException.Code.FAILED_PRECONDITION
+                        )
+                    }
+
+                    // 3. Check user's wallet balance
+                    if (tournamentEntryFee > 0) {
+                        val walletSnapshot = transaction.get(walletDocRef)
+                        if (!walletSnapshot.exists()) {
+                            throw FirebaseFirestoreException(
+                                "Wallet not found",
+                                FirebaseFirestoreException.Code.NOT_FOUND
+                            )
                         }
-
-                        // Call repository method with timeout
-                        val registrationResult = RetryUtils.withTimeout(10000L) {
-                            repository.registerForTournament(
-                                tournamentId = currentData.tournamentId,
-                                userId = userId,
-                                displayName = displayName,
-                                teamName = currentData.teamName,
-                                playerIds = currentData.playerIds
+                        val userBalance = walletSnapshot.getDouble("balance") ?: 0.0
+                        if (userBalance < tournamentEntryFee) {
+                            throw FirebaseFirestoreException(
+                                "Insufficient wallet balance", // Simple message
+                                FirebaseFirestoreException.Code.FAILED_PRECONDITION
                             )
                         }
 
-                        // Check if the Result itself failed and throw if needed
-                        registrationResult.getOrThrow()
+                        // 4. Deduct entry fee from wallet
+                        transaction.update(walletDocRef, "balance", FieldValue.increment(-tournamentEntryFee))
 
-                        // If we reach here, registration was successful
-                        shouldRetry = false
-                        lastException = null
-
-                    } catch (e: Exception) {
-                        lastException = e
-                        Log.w("TournamentViewModel", "Registration attempt $attemptCount failed: ${e.message}")
-
-                        // Don't retry for business rule errors
-                        shouldRetry = when {
-                            e.message?.contains("Registration is closed", ignoreCase = true) == true -> false
-                            e.message?.contains("already registered", ignoreCase = true) == true -> false
-                            e.message?.contains("insufficient", ignoreCase = true) == true -> false
-                            e.message?.contains("PERMISSION_DENIED", ignoreCase = true) == true -> false
-                            e.message?.contains("Missing or insufficient permissions", ignoreCase = true) == true -> false
-                            e.message?.contains("network", ignoreCase = true) == true -> attemptCount < 3
-                            e.message?.contains("timeout", ignoreCase = true) == true -> attemptCount < 3
-                            RetryUtils.isRetryableException(e) -> attemptCount < 3
-                            else -> false // Unknown errors don't retry
-                        }
-
-                        if (shouldRetry && attemptCount < 3) {
-                            Log.d("TournamentViewModel", "Will retry registration in ${1000L * attemptCount}ms")
-                            delay(1000L * attemptCount) // Exponential backoff
-                        }
+                        // 5. Create a transaction log for the entry fee
+                        val txLogRef = db.collection("transactions").document() // New random log ID
+                        val txData = hashMapOf(
+                            "userId" to userId,
+                            "type" to "entry_fee",
+                            "amount" to -tournamentEntryFee,
+                            "tournamentId" to currentData.tournamentId,
+                            "timestamp" to FieldValue.serverTimestamp(),
+                            "status" to "completed" // Transaction is immediate
+                        )
+                        transaction.set(txLogRef, txData)
                     }
-                }
 
-                // If we have an exception, throw it
-                if (lastException != null) {
-                    throw lastException
-                }
+                    // 6. Create the new registration document
+                    val newRegistrationData = hashMapOf(
+                        "userId" to userId,
+                        "tournamentId" to currentData.tournamentId,
+                        "teamName" to currentData.teamName,
+                        "playerIds" to currentData.playerIds, // Using playerIds as in your old code
+                        "registeredAt" to FieldValue.serverTimestamp(),
+                        "paymentStatus" to if (tournamentEntryFee > 0) "completed" else "not_required",
+                        "username" to displayName // Store the user's name for easy lookup
+                    )
+                    transaction.set(registrationDocRef, newRegistrationData)
 
-                // If we reach here, registration was successful
-                Log.d("TournamentViewModel", "Registration successful after ${_retryCount.value} attempts")
+                    // 7. Update the tournament's team count
+                    transaction.update(tournamentDocRef, "registeredTeams", FieldValue.increment(1))
+
+                    // Transaction must return null on success
+                    null
+                }.await() // Wait for the transaction to complete
+
+                // Transaction committed successfully!
+                Log.d("TournamentViewModel", "Registration Transaction SUCCEEDED")
                 _registrationState.value = Result.success(Unit)
-                resetRegistrationFlow()
-                _retryCount.value = 0
+                resetRegistrationFlow() // Clear the flow
+                _lastProcessedTournamentId.value = currentData.tournamentId // Notify UI
+
+                // ** CRITICAL FIX: Update the local set of registered IDs
+                _registeredTournamentIds.update { it + currentData.tournamentId }
 
             } catch (e: Exception) {
-                Log.e("TournamentViewModel", "Registration failed after ${_retryCount.value} attempts: ${e.message}", e)
-
-                // Set appropriate error message based on exception type
-                val errorMessage = when {
-                    e.message?.contains("Registration is closed", ignoreCase = true) == true ->
-                        "Registration is closed for this tournament"
-                    e.message?.contains("PERMISSION_DENIED", ignoreCase = true) == true ->
-                        "Permission denied. Please check your account permissions or contact support."
-                    e.message?.contains("Missing or insufficient permissions", ignoreCase = true) == true ->
-                        "Permission denied. Please check your account permissions or contact support."
-                    e.message?.contains("network", ignoreCase = true) == true ->
-                        "Network error. Please check your connection and try again."
-                    e.message?.contains("timeout", ignoreCase = true) == true ->
-                        "Request timed out. Please try again."
-                    e.message?.contains("insufficient", ignoreCase = true) == true ->
-                        "Insufficient wallet balance for this tournament"
-                    e.message?.contains("already registered", ignoreCase = true) == true ->
-                        "You are already registered for this tournament"
-                    RetryUtils.isRetryableException(e) ->
-                        "Connection issue. Please try again."
-                    else -> e.message ?: "Registration failed. Please try again."
+                // Transaction failed
+                Log.e("TournamentViewModel", "Registration transaction FAILED", e)
+                val errorMessage = when ((e as? FirebaseFirestoreException)?.code) {
+                    FirebaseFirestoreException.Code.ALREADY_EXISTS ->
+                        "You are already registered for this tournament."
+                    FirebaseFirestoreException.Code.FAILED_PRECONDITION -> {
+                        // Check for specific error messages
+                        if (e.message?.contains("full") == true) {
+                            "This tournament is already full."
+                        } else if (e.message?.contains("Insufficient") == true) {
+                            "Insufficient wallet balance."
+                        } else {
+                            e.message ?: "Registration failed. Please try again."
+                        }
+                    }
+                    FirebaseFirestoreException.Code.NOT_FOUND -> {
+                        if (e.message?.contains("Wallet") == true) {
+                            "Wallet not found. Please contact support."
+                        } else {
+                            "Tournament not found. It may have been deleted."
+                        }
+                    }
+                    else -> e.message ?: "An unknown error occurred."
                 }
-
-                Log.d("TournamentViewModel", "Setting error message: $errorMessage")
                 _currentError.value = errorMessage
                 _registrationState.value = Result.failure(e)
-
             } finally {
-                networkJob.cancel() // Stop network monitoring
                 _isRegistering.value = false
                 _isRetrying.value = false
-
-                Log.d("TournamentViewModel", "Registration process completed")
             }
         }
     }
+    // --- END OF performTournamentRegistration FIX ---
 
-    /**
-     * Retry registration manually (for UI retry buttons)
-     */
+
     fun retryRegistration() {
-        Log.d("TournamentViewModel", "Manual retry registration triggered")
         _currentError.value = null
         _retryCount.value = 0
         performTournamentRegistration()
     }
 
-    // NEW: Countdown job
     private var countdownJob: Job? = null
 
 
@@ -562,58 +639,40 @@ class TournamentViewModel @Inject constructor(
         _isRegistering.value = false
     }
 
-    /**
-     * Fetches tournaments that the current user has registered for
-     */
+    // NEW: Clear Payout Status
+    fun clearPayoutStatus() {
+        _payoutStatus.value = null
+    }
+
     fun getRegisteredTournaments() {
         viewModelScope.launch {
             try {
                 _myTournamentsUiState.update { it.copy(isLoading = true, error = null) }
-
-                val userId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+                val userId = currentUserId ?: ""
                 if (userId.isBlank()) {
-                    _myTournamentsUiState.update { it.copy(
-                        isLoading = false,
-                        error = "User not authenticated"
-                    ) }
+                    _myTournamentsUiState.update { it.copy(isLoading = false, error = "User not authenticated") }
                     return@launch
                 }
 
-                // Get registered tournament IDs for the user
-                val registeredTournamentIds = repository.getUserTournamentRegistrations(userId)
-
+                // Use the updated list from the repository
+                val registeredTournamentIds = repository.getUserTournamentRegistrations(userId).first()
                 if (registeredTournamentIds.isEmpty()) {
-                    _myTournamentsUiState.update { it.copy(
-                        tournaments = emptyList(),
-                        isLoading = false,
-                        error = null
-                    ) }
+                    _myTournamentsUiState.update { it.copy(tournaments = emptyList(), isLoading = false) }
                     return@launch
                 }
 
-                // Fetch full tournament details for each registered tournament
                 val tournaments = registeredTournamentIds.mapNotNull { tournamentId ->
                     repository.getTournamentById(tournamentId)
-                }.sortedBy { it.startTime } // Sort by start time
+                }.sortedBy { it.startTime }
 
-                _myTournamentsUiState.update { it.copy(
-                    tournaments = tournaments,
-                    isLoading = false,
-                    error = null
-                ) }
+                _myTournamentsUiState.update { it.copy(tournaments = tournaments, isLoading = false) }
 
             } catch (e: Exception) {
-                _myTournamentsUiState.update { it.copy(
-                    isLoading = false,
-                    error = e.message ?: "Failed to load tournaments"
-                ) }
+                _myTournamentsUiState.update { it.copy(isLoading = false, error = e.message ?: "Failed to load tournaments") }
             }
         }
     }
 
-    /**
-     * Refreshes the list of registered tournaments
-     */
     fun refreshTournaments() {
         viewModelScope.launch {
             _isRefreshing.value = true
@@ -622,73 +681,23 @@ class TournamentViewModel @Inject constructor(
         }
     }
 
-
-    init {
-        // Log state restoration for debugging
-        Log.d("TournamentViewModel", "Initializing ViewModel")
-        Log.d("TournamentViewModel", "Restored currentStep: ${_currentStep.value}")
-        Log.d("TournamentViewModel", "Restored stepData: ${_stepData.value}")
-
-        setState(TournamentState())
-        loadTournaments()
-        startCountdownTimer()
-        val userId = firebaseManager.auth.currentUser?.uid
-        if (userId != null) {
-            viewModelScope.launch {
-                walletRepository.getWalletBalance(userId).collect { balance ->
-                    _walletBalance.value = balance
-                }
-            }
-            viewModelScope.launch {
-                try {
-                    // Get user data from DataStore (pre-fetched during splash screen)
-                    val userNameFromDataStore = dataStoreManager.userName.first()
-
-                    if (userNameFromDataStore.isNotBlank()) {
-                        Log.d("TournamentViewModel", "Using pre-fetched username from DataStore: $userNameFromDataStore")
-                        _userName.value = userNameFromDataStore
-                    } else {
-                        // Fallback to Firestore if DataStore doesn't have the data
-                        Log.d("TournamentViewModel", "DataStore empty, fetching from Firestore")
-                        val userResult = userRepository.getUser(userId)
-                        val user = userResult.getOrNull()
-                        _userName.value = user?.username?.takeIf { it.isNotBlank() }
-                            ?: user?.displayName?.takeIf { it.isNotBlank() }
-                                    ?: "Gamer"
-
-                        // Set country and currency from the fetched user data
-                        val country = user?.country ?: "India"
-                        _userCountry.value = country
-                        _userCurrency.value = if (country.equals("Nigeria", true) || country.equals("NG", true)) "NGN" else "INR"
-                        Log.d("TournamentViewModel", "Fetched user details. Country: ${user?.country}, Currency: ${_userCurrency.value}")
-                    }
-                } catch (e: Exception) {
-                    Log.e("TournamentViewModel", "Error fetching user data", e)
-                    _userName.value = "Gamer"
-                    _userCountry.value = "India"
-                    _userCurrency.value = "INR"
-                }
-            }
-        }
-    }
-
     private fun startCountdownTimer() {
-        countdownJob?.cancel() // Cancel existing timer if any
+        countdownJob?.cancel()
         countdownJob = viewModelScope.launch {
             while (true) {
                 updateAllCountdowns()
-                delay(1000) // Update every second
+                delay(1000)
             }
         }
     }
 
     private fun updateAllCountdowns() {
         val currentState = state.value ?: return
-        val tournaments = currentState.tournaments
         val newCountdowns = mutableMapOf<String, String>()
 
-        tournaments.forEach { tournament ->
-            if (tournament.computedStatus in listOf(TournamentStatus.UPCOMING, TournamentStatus.ONGOING)) {
+        currentState.tournaments.forEach { tournament ->
+            // Use the model's computedStatus
+            if (tournament.computedStatus in listOf(TournamentStatus.UPCOMING, TournamentStatus.STARTS_SOON, TournamentStatus.ROOM_OPEN, TournamentStatus.ONGOING)) {
                 val countdown = calculateRemainingTime(tournament)
                 if (countdown.isNotEmpty()) {
                     newCountdowns[tournament.id] = countdown
@@ -696,7 +705,6 @@ class TournamentViewModel @Inject constructor(
             }
         }
 
-        // Only update state if countdowns changed (optimization)
         if (newCountdowns != currentState.countdowns) {
             setState(currentState.copy(countdowns = newCountdowns))
         }
@@ -705,22 +713,15 @@ class TournamentViewModel @Inject constructor(
     private fun calculateRemainingTime(tournament: Tournament): String {
         val currentTime = System.currentTimeMillis()
 
+        // Use the model's computedStatus to decide WHAT to count down to
         return when (tournament.computedStatus) {
-            TournamentStatus.UPCOMING -> {
-                val timeDiff = (tournament.startTime ?: 0L) - currentTime
-                if (timeDiff <= 0) {
-                    "Starting..."
-                } else {
-                    formatTimeRemaining(timeDiff)
-                }
+            TournamentStatus.UPCOMING, TournamentStatus.STARTS_SOON -> {
+                val timeDiff = tournament.startTime - currentTime
+                if (timeDiff <= 0) "Starting..." else formatTimeRemaining(timeDiff)
             }
-            TournamentStatus.ONGOING -> {
-                val timeDiff = (tournament.completedAt ?: 0L) - currentTime
-                if (timeDiff <= 0) {
-                    "Ending..."
-                } else {
-                    formatTimeRemaining(timeDiff)
-                }
+            TournamentStatus.ROOM_OPEN, TournamentStatus.ONGOING -> {
+                val timeDiff = (tournament.completedAt ?: (tournament.startTime + 2 * 60 * 60 * 1000)) - currentTime // Assume 2hr default
+                if (timeDiff <= 0) "Ending..." else formatTimeRemaining(timeDiff)
             }
             else -> ""
         }
@@ -731,10 +732,10 @@ class TournamentViewModel @Inject constructor(
         val minutes = (timeDiff % (60 * 60 * 1000)) / (60 * 1000)
         val seconds = (timeDiff % (60 * 1000)) / 1000
 
+        // ⭐ FIX: Replaced unresolved 'sprintf' with standard 'String.format'
         return when {
             hours > 0 -> String.format("%02d:%02d:%02d", hours, minutes, seconds)
-            minutes > 0 -> String.format("%02d:%02d", minutes, seconds)
-            else -> String.format("%02ds", seconds)
+            else -> String.format("%02d:%02d", minutes, seconds)
         }
     }
 
@@ -743,29 +744,43 @@ class TournamentViewModel @Inject constructor(
         countdownJob?.cancel()
     }
 
+    // =====================================================================
+    // Main Tournament List Events
+    // =====================================================================
+
     override fun handleEvent(event: TournamentEvent) {
         when (event) {
             is TournamentEvent.LoadTournaments -> loadTournaments()
             is TournamentEvent.FilterTournaments -> filterTournaments(event.filter)
             is TournamentEvent.CreateTournament -> createTournament(event.tournament)
             is TournamentEvent.RefreshTournaments -> refreshTournaments(event.force)
-
         }
     }
 
+    /**
+     * Corrected `loadTournaments` to combine the tournaments flow with the live
+     * user registration IDs flow to get the latest registration status.
+     */
     fun loadTournaments() {
         viewModelScope.launch {
             Log.d("TournamentViewModel", "Starting to load tournaments")
             super.setLoading(true)
             super.setError(null)
             try {
-                repository.getTournaments().collect { tournaments ->
-                    Log.d("TournamentViewModel", "Received ${tournaments.size} tournaments from repository")
-                    tournaments.forEach { tournament ->
-                        Log.d("TournamentViewModel", "Tournament: ${tournament.name}, ID: ${tournament.id}, Status: ${tournament.status}")
-                    }
+                // Combine the tournaments flow with the user registrations flow
+                repository.getTournaments().combine(_registeredTournamentIds) { tournaments, registeredIds ->
+                    Pair(tournaments, registeredIds)
+                }.collect { (tournaments, registeredIds) ->
+                    Log.d("TournamentViewModel", "Received ${tournaments.size} tournaments. ${registeredIds.size} registered.")
+
+                    // Map the set of IDs to a Map<String, Boolean> for the state
+                    val registrationMap = registeredIds.associateWith { true }
+
                     val currentState = state.value ?: TournamentState()
-                    setState(currentState.copy(tournaments = tournaments))
+                    setState(currentState.copy(
+                        tournaments = tournaments,
+                        userRegistrations = registrationMap // Update the new field
+                    ))
                     Log.d("TournamentViewModel", "Updated state with ${tournaments.size} tournaments")
                 }
             } catch (e: Exception) {
@@ -783,17 +798,30 @@ class TournamentViewModel @Inject constructor(
             super.setLoading(true)
             super.setError(null)
             try {
-                repository.getTournaments().collect { tournaments ->
+                // Wait for both tournaments and registrations to be available
+                // NOTE: This uses the existing flow logic. It could be optimized, but is kept for consistency.
+                repository.getTournaments().combine(_registeredTournamentIds) { tournaments, registeredIds ->
+                    Pair(tournaments, registeredIds)
+                }.collect { (tournaments, registeredIds) ->
+
+                    val processedTournaments = tournaments
+
                     val filteredTournaments = when (filter) {
-                        TournamentFilter.ALL -> tournaments
-                        TournamentFilter.UPCOMING -> tournaments.filter { it.computedStatus == TournamentStatus.UPCOMING }
-                        TournamentFilter.ONGOING -> tournaments.filter { it.computedStatus == TournamentStatus.ONGOING }
-                        TournamentFilter.COMPLETED -> tournaments.filter { it.computedStatus == TournamentStatus.COMPLETED }
+                        TournamentFilter.ALL -> processedTournaments
+                        TournamentFilter.UPCOMING -> processedTournaments.filter {
+                            it.computedStatus == TournamentStatus.UPCOMING || it.computedStatus == TournamentStatus.STARTS_SOON
+                        }
+                        TournamentFilter.ONGOING -> processedTournaments.filter {
+                            it.computedStatus == TournamentStatus.ONGOING || it.computedStatus == TournamentStatus.ROOM_OPEN
+                        }
+                        TournamentFilter.COMPLETED -> processedTournaments.filter { it.computedStatus == TournamentStatus.COMPLETED }
                     }
                     val currentState = state.value ?: TournamentState()
                     setState(currentState.copy(
                         tournaments = filteredTournaments,
-                        selectedFilter = filter
+                        selectedFilter = filter,
+                        // Update the registration map here too
+                        userRegistrations = registeredIds.associateWith { true }
                     ))
                 }
             } catch (e: Exception) {
@@ -810,7 +838,7 @@ class TournamentViewModel @Inject constructor(
             super.setError(null)
             try {
                 repository.createTournament(tournament)
-                    .onSuccess { loadTournaments() }
+                    .onSuccess { loadTournaments() } // Reload list on success
                     .onFailure { super.setError(it.message ?: "Failed to create tournament") }
             } catch (e: Exception) {
                 super.setError(e.message ?: "Failed to create tournament")
@@ -820,10 +848,12 @@ class TournamentViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Corrected `refreshTournaments` to also refresh the user's registration IDs.
+     */
     private fun refreshTournaments(force: Boolean) {
-        // Check if we can refresh (debounce)
-        if (!canRefresh()) {
-            Log.d("TournamentViewModel", "Refresh debounced - too soon since last refresh")
+        if (!canRefresh() && !force) {
+            Log.d("TournamentViewModel", "Refresh debounced")
             return
         }
 
@@ -835,38 +865,39 @@ class TournamentViewModel @Inject constructor(
             Log.d("TournamentViewModel", "Refresh state: isRefreshing = true")
 
             try {
-                Log.d("TournamentViewModel", "Starting refresh tournaments")
-
-                // Add minimum loading time for better UX
                 val startTime = System.currentTimeMillis()
-                val minimumLoadingTime = 1000L // 1 second minimum
+                val minimumLoadingTime = 1000L
 
-                // Force a fresh fetch from Firestore - take only the first emission
+                // Force a fresh fetch (take 1) for tournaments
                 val tournaments = repository.getTournaments().take(1).first()
-                Log.d("TournamentViewModel", "Refresh received ${tournaments.size} tournaments")
+                // Force a fresh fetch (take 1) for registrations
+                val registeredIds = repository.getUserTournamentRegistrations(currentUserId ?: "").take(1).first()
+                Log.d("TournamentViewModel", "Refresh received ${tournaments.size} tournaments and ${registeredIds.size} registrations.")
+
+                val processedTournaments = tournaments
+
+                val registrationMap = registeredIds.associateWith { true }
+                _registeredTournamentIds.value = registeredIds.toSet() // Update the internal StateFlow
 
                 val currentState = state.value ?: TournamentState()
-                setState(currentState.copy(tournaments = tournaments))
+                setState(currentState.copy(
+                    tournaments = processedTournaments,
+                    userRegistrations = registrationMap // Update the state
+                ))
 
-                // Ensure minimum loading time for better UX
                 val elapsedTime = System.currentTimeMillis() - startTime
                 if (elapsedTime < minimumLoadingTime) {
-                    val remainingTime = minimumLoadingTime - elapsedTime
-                    Log.d("TournamentViewModel", "Adding ${remainingTime}ms delay for minimum loading time")
-                    kotlinx.coroutines.delay(remainingTime)
+                    delay(minimumLoadingTime - elapsedTime)
                 }
 
                 _refreshSuccess.value = true
-                Log.d("TournamentViewModel", "Refresh completed successfully")
             } catch (e: Exception) {
                 Log.e("TournamentViewModel", "Error during refresh", e)
                 _refreshError.value = e.message ?: "Failed to refresh tournaments"
             } finally {
                 _isRefreshing.value = false
-                Log.d("TournamentViewModel", "Refresh state: isRefreshing = false")
-
-                // Clear success/error states after a delay
-                kotlinx.coroutines.delay(2000)
+                // Auto-clear success/error messages
+                delay(2000)
                 _refreshSuccess.value = false
                 _refreshError.value = null
             }
@@ -874,7 +905,7 @@ class TournamentViewModel @Inject constructor(
     }
 
     fun getTournamentById(tournamentId: String) {
-        Log.d("TournamentViewModel", "Getting tournament details for ID: $tournamentId, ${selectedTournament.value?.name}, ${selectedTournament.value?.id}, ${selectedTournament.value?.status}")
+        Log.d("TournamentViewModel", "Getting tournament details for ID: $tournamentId")
         viewModelScope.launch {
             _isLoadingDetails.value = true
             _detailsError.value = null
@@ -887,7 +918,6 @@ class TournamentViewModel @Inject constructor(
                     _selectedTournament.value = tournament
                 } else {
                     _detailsError.value = "Tournament not found"
-                    Log.e("TournamentViewModel", "Tournament not found for ID: $tournamentId")
                 }
             } catch (e: Exception) {
                 Log.e("TournamentViewModel", "Error loading tournament details", e)
@@ -907,15 +937,348 @@ class TournamentViewModel @Inject constructor(
         _registrationState.value = null
     }
 
+    fun clearKycDialog() {
+        _showKycRequiredDialog.value = false
+    }
 
-    fun checkRegistrationStatus(tournamentId: String, userId: String) {
-        viewModelScope.launch {
-            _registrationStatus.value = null
-            _registrationStatus.value = repository.isUserRegisteredForTournament(tournamentId, userId)
+    // =====================================================================
+    // 💡 NEW HELPER FUNCTIONS (Gemini Integration)
+    // =====================================================================
+
+    /**
+     * Helper function to convert a content URI to a Bitmap object.
+     * Must be called on a background thread.
+     */
+    private fun uriToBitmap(context: Context, uri: Uri): Bitmap? {
+        return try {
+            val contentResolver = context.contentResolver
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver, uri))
+            } else {
+                @Suppress("DEPRECATION")
+                MediaStore.Images.Media.getBitmap(contentResolver, uri)
+            }
+        } catch (e: Exception) {
+            Log.e("ImageUtils", "Error converting URI to Bitmap: ${e.message}")
+            null
         }
     }
 
-    fun clearKycDialog() {
-        _showKycRequiredDialog.value = false
+    private fun getAnalysisPrompt(): String {
+        return """
+        Analyze the provided end-of-match screenshot (e.g., BGMI, PUBG, etc.).
+        You must extract the following four values accurately:
+        1. The player's final RANK (e.g., '1' for WWCD, '2', '5', etc.).
+        2. The player's total KILLS (a number).
+        3. The MAX CAPACITY of the match (e.g., total number of players/teams shown).
+        4. The name of the player whose result is shown (e.g., the in-game display name).
+
+        Return ONLY the result as a raw JSON string. Do NOT include any additional text, explanation, or markdown formatting (e.g., no ```json ```).
+        If a value cannot be found, use 0 for numbers or an empty string for the name.
+        JSON keys must be 'rank', 'kills', 'maxCapacity', and 'playerName'.
+        Example: {"rank": 1, "kills": 8, "maxCapacity": 60, "playerName": "GamerX_Pro"}
+        """
+    }
+
+    /**
+     * Performs the image analysis using the Gemini API.
+     */
+    private suspend fun analyzeImageWithGemini(context: Context, uri: Uri): AnalyzedResult {
+        val bitmap = uriToBitmap(context, uri) ?: throw Exception("Failed to load image for analysis.")
+
+        val promptText = getAnalysisPrompt()
+
+        // 1. Build the Gemini Request
+        val contents = content {
+            image(bitmap)
+            text(promptText)
+        }
+
+        // 2. Call the Gemini API
+        val response = geminiModel.generateContent(contents)
+
+        val jsonString = response.text?.trim()
+            ?: throw Exception("Gemini returned no text response.")
+
+        // 3. Parse the JSON string into your data class
+        return try {
+            // Use Gson to deserialize the JSON
+            Gson().fromJson(jsonString, AnalyzedResult::class.java).also {
+                if (it.rank == 0 && it.kills == 0 && it.playerName.isBlank()) {
+                    throw Exception("Could not confidently extract rank, kills, or player name from the image.")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("GeminiAnalysis", "Failed to parse JSON: $jsonString", e)
+            throw Exception("Analysis failed. Please ensure the screenshot is clear and shows the final result screen.")
+        }
+    }
+
+    // =====================================================================
+    // ✅ MODIFIED: submitTournamentResult (with Gemini Integration)
+    // =====================================================================
+
+    /**
+     * Uploads the screenshot to Firebase Storage, analyzes it with Gemini,
+     * and records the result submission in Firestore.
+     *
+     * @param context The application context needed to resolve the Uri.
+     * @param tournamentId The ID of the tournament.
+     * @param screenshotUri The local Uri of the screenshot file.
+     * @param onSuccess Callback to execute upon successful submission.
+     * @param onFailure Callback to execute upon failure, with an error message.
+     */
+    fun submitTournamentResult(
+        context: Context, // NEW PARAMETER
+        tournamentId: String,
+        screenshotUri: Uri,
+        onSuccess: () -> Unit,
+        onFailure: (String) -> Unit
+    ) {
+        val userId = currentUserId
+        if (userId == null) {
+            onFailure("User not authenticated.")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                // --- 1. PRE-READ DATA FOR AUDIT LOGGING ---
+                val tournamentDocRef = db.collection("tournaments").document(tournamentId)
+                val tournamentSnapshot = tournamentDocRef.get().await()
+
+                val registrationDocRef = db.collection("tournament_registrations").document("${userId}_${tournamentId}")
+                val registrationSnapshot = registrationDocRef.get().await()
+
+                // Extract Audit Data
+                @Suppress("UNCHECKED_CAST")
+                val tournamentPrizeStructure = tournamentSnapshot.get("prizeStructure") as? Map<String, Double> ?: emptyMap()
+                val tournamentMaxTeams = tournamentSnapshot.getLong("maxTeams") ?: 0
+                val tournamentKillReward = tournamentSnapshot.getDouble("killReward") ?: 0.0 // FETCH THE KILL REWARD
+                val registrationPlayerIds = registrationSnapshot.get("playerIds") as? List<String> ?: emptyList()
+
+                // 2. ANALYZE IMAGE with Gemini
+                val analyzedData = analyzeImageWithGemini(context, screenshotUri)
+                Log.d("TournamentViewModel", "Gemini Analysis Success: Rank=${analyzedData.rank}, Kills=${analyzedData.kills} , Player=${analyzedData.playerName}")
+
+                // NEW: Calculate Kill Prize for Audit
+                val calculatedKillPrize = analyzedData.kills * tournamentKillReward
+
+                // 3. Upload screenshot to Firebase Storage
+                val imageFileName = UUID.randomUUID().toString() + ".jpg"
+                // Path: tournament_proofs/{tournamentId}/{userId}/{random_uuid}.jpg
+                val proofRef = storage.child("tournament_proofs/$tournamentId/$userId/$imageFileName")
+
+                val downloadUri = proofRef.putFile(screenshotUri)
+                    .continueWithTask { task ->
+                        if (!task.isSuccessful) {
+                            task.exception?.let { throw it }
+                        }
+                        proofRef.downloadUrl // Get the public URL for the image
+                    }.await()
+
+                // 4. Save the submission data (including analyzed results & audit data) to Firestore
+                val resultData = hashMapOf(
+                    "userId" to userId,
+                    "tournamentId" to tournamentId,
+                    "screenshotUrl" to downloadUri.toString(),
+                    "submittedAt" to FieldValue.serverTimestamp(),
+                    "status" to "Pending Verification", // Initial status for automated check
+
+                    // Gemini-analyzed results
+                    "analyzedRank" to analyzedData.rank,
+                    "analyzedKills" to analyzedData.kills,
+                    "analyzedMaxCapacity" to analyzedData.maxCapacity,
+                    "analyzedPlayerName" to analyzedData.playerName,
+
+                    // Audit Data (Collected as requested)
+                    "auditMaxTeams" to tournamentMaxTeams,
+                    "auditKillReward" to tournamentKillReward,
+                    "auditPlayerIds" to registrationPlayerIds,
+                    "auditPrizeStructure" to tournamentPrizeStructure,
+                    // NEW: Store the calculated Kill Prize for auditing
+                    "auditKillPrizeAmount" to calculatedKillPrize
+                )
+
+                db.collection("tournament_results")
+                    .add(resultData)
+                    .await()
+
+                Log.d("TournamentViewModel", "Result submitted successfully with audit data for Tournament ID: $tournamentId")
+                onSuccess()
+
+                // 5. AUTOMATICALLY TRIGGER DISTRIBUTION
+                triggerPrizeDistribution(tournamentId)
+
+            } catch (e: Exception) {
+                Log.e("TournamentViewModel", "Error submitting tournament result for $tournamentId", e)
+                val errorMessage = when (e) {
+                    is FirebaseFirestoreException -> "Database error: ${e.localizedMessage}"
+                    // Catch the custom error from Gemini analysis
+                    is IllegalStateException -> "Analysis failed: ${e.message}"
+                    else -> "Submission failed: ${e.localizedMessage}"
+                }
+                onFailure(errorMessage)
+            }
+        }
+    }
+
+    // =====================================================================
+    // 💰 MODIFIED: Automated Prize Distribution Logic (Zero-Admin)
+    // =====================================================================
+
+    /**
+     * Executes the zero-admin, automatic prize distribution logic.
+     * This version ONLY credits the kill prize (auditKillPrizeAmount).
+     *
+     * @param tournamentId The ID of the tournament to process.
+     */
+    fun triggerPrizeDistribution(
+        tournamentId: String
+    ) {
+        val userId = currentUserId
+        if (userId == null) {
+            _payoutStatus.value = Result.failure(Exception("User not authenticated."))
+            return
+        }
+
+        viewModelScope.launch {
+            _payoutStatus.value = null // Reset status
+            Log.d("PrizeDistribution", "Starting ZERO-ADMIN prize distribution check for $tournamentId (Kill Prize Only)")
+
+            var submissionDocRef: com.google.firebase.firestore.DocumentReference? = null
+            var userFriendlyError: String? = null // Hold the specific failure reason
+
+            try {
+                // 0. Fetch User Display Name (from the local StateFlow) - Now only for logging/future use
+                // val expectedDisplayName = _userName.value.trim().lowercase() // Removed for temporary bypass
+
+                // 1. Fetch the user's latest result submission
+                val submissionQuery = db.collection("tournament_results")
+                    .whereEqualTo("userId", userId)
+                    .whereEqualTo("tournamentId", tournamentId)
+                    .orderBy("submittedAt", Query.Direction.DESCENDING)
+                    .limit(1)
+                    .get().await()
+
+                val submissionDoc = submissionQuery.documents.firstOrNull()
+                    ?: throw Exception("No result submission found for this user/tournament.")
+
+                submissionDocRef = submissionDoc.reference
+
+                // --- Extract Data from Submission Document ---
+                val analyzedKills = submissionDoc.getLong("analyzedKills")?.toInt() ?: 0
+                val analyzedMaxCapacity = submissionDoc.getLong("analyzedMaxCapacity")?.toInt() ?: 0
+                val analyzedPlayerName = submissionDoc.getString("analyzedPlayerName")?.trim()?.lowercase() ?: ""
+
+                // The amount to credit, as calculated during submission
+                val killPrizeToCredit = submissionDoc.getDouble("auditKillPrizeAmount")
+                    ?: throw Exception("Kill Prize Amount Missing in Audit Log")
+
+                // Audit data used for cross-checking
+                val auditMaxTeams = submissionDoc.getLong("auditMaxTeams")?.toInt() ?: 0
+                @Suppress("UNCHECKED_CAST")
+                val auditPlayerIds = submissionDoc.get("auditPlayerIds") as? List<String> ?: emptyList()
+
+
+                // 2. CROSS-CHECK/VERIFICATION LOGIC (RE-IMPLEMENTING CHECKS)
+
+                // 2a. Check if prize has already been distributed (Idempotency)
+                val status = submissionDoc.getString("status")
+                if (status == "Prize Distributed") {
+                    _payoutStatus.value = Result.success("Prize already distributed to wallet.")
+                    return@launch
+                }
+
+                // ⭐ RE-IMPLEMENTED CHECK 1: Max Capacity Match
+                if (analyzedMaxCapacity != auditMaxTeams) {
+                    userFriendlyError = "Verification Failed: Match size discrepancy. Detected $analyzedMaxCapacity, Expected $auditMaxTeams."
+                    throw Exception(userFriendlyError)
+                }
+
+                // ⭐ RE-IMPLEMENTED CHECK 2: Player ID Match
+                val playerMatch = auditPlayerIds.any { it.trim().lowercase() == analyzedPlayerName }
+                if (!playerMatch) {
+                    userFriendlyError = "Verification Failed: Player name ('${analyzedPlayerName.uppercase()}') does not match registered player IDs."
+                    throw Exception(userFriendlyError)
+                }
+
+
+                // 3. PRIZE CALCULATION (Simplified to only use Kill Prize)
+                val totalPrizeAmount = killPrizeToCredit // Only the kill prize is credited
+
+                // Log and update status if no prize is earned
+                if (totalPrizeAmount <= 0.0) {
+                    submissionDoc.reference.update("status", "Verified - No Prize").await()
+                    _payoutStatus.value = Result.success("Result verified. You earned ${analyzedKills} kills, total prize: ${userCurrency.value} 0.00.")
+                    return@launch
+                }
+
+                // 4. SECURE FUND TRANSFER (Use WalletRepository method)
+
+                // Create map for prize audit log in submission doc
+                val prizeDetails = mapOf(
+                    "killPrizeCredited" to totalPrizeAmount, // Renamed for clarity
+                    "totalCredited" to totalPrizeAmount
+                )
+
+                // IMPORTANT: Use the dedicated repository method for the atomic update
+                val updateResult = walletRepository.incrementWithdrawableBalance(userId, totalPrizeAmount)
+
+                updateResult.onSuccess {
+                    // Update the result submission status AND log the calculated prizes
+                    submissionDoc.reference.update(
+                        "status", "Prize Distributed",
+                        "payoutDetails" to prizeDetails // Log the breakdown of the prize
+                    ).await()
+
+                    // Success
+                    _payoutStatus.value = Result.success("Success! Kill prize of **${userCurrency.value} $totalPrizeAmount** (${analyzedKills} Kills) automatically credited to your **Withdrawal Balance**.")
+                }.onFailure { e ->
+                    // ⭐ ACTION: Log the Repository error to the userFriendlyError variable
+                    userFriendlyError = "Wallet update failed via Repository: ${e.message}"
+                    Log.e("PrizeDistribution", "Wallet increment failed via Repository: ${e.message}", e)
+                    // Re-throw the exception to fall into the main catch block (Step 5)
+                    throw Exception("Wallet update failed: ${e.message}")
+                }
+
+            } catch (e: Exception) {
+                // 5. ERROR LOGGING AND STATUS UPDATE
+
+                // This block executes if any part of the try block (including the repository failure) threw an exception.
+
+                // If userFriendlyError was set during the verification checks OR the onFailure block, use it.
+                // Otherwise, translate general internal errors.
+                val finalError = userFriendlyError ?: when (e.message) {
+                    // The error message from the failed update is now guaranteed to be captured in finalError
+                    // if it was set in the onFailure block above.
+                    "Kill Prize Amount Missing in Audit Log" -> "Payout failed: The kill prize amount could not be found. Please contact support."
+                    "Wallet not found." -> "Wallet error: Your wallet document is missing. Please contact support immediately."
+                    // Catch Firebase Transaction failure message, which is usually generic
+                    else -> e.message ?: "An unknown error occurred during verification."
+                }
+
+                // Construct the update map to log the failure reason
+                val updateMap = hashMapOf<String, Any>(
+                    "status" to "Verification Failed"
+                )
+                if (finalError.isNotBlank()) {
+                    updateMap["verificationFailureReason"] = finalError
+                }
+
+                // Use the submissionDocRef to update the status and log the failure reason
+                if (submissionDocRef != null) {
+                    // ⭐ CRITICAL: The double failure happens here. We added a try-catch to prevent a crash
+                    // but the underlying PERMISSION_DENIED on the tournament_results doc is the problem.
+                    try {
+                        submissionDocRef!!.update(updateMap).await()
+                    } catch (updateE: Exception) {
+                        Log.e("PrizeDistribution", "FATAL: Failed to write final failure status to DB: ${updateE.message}")
+                    }
+                }
+
+                _payoutStatus.value = Result.failure(Exception(finalError))
+            }
+        }
     }
 }

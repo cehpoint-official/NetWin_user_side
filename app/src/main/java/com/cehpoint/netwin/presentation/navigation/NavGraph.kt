@@ -34,23 +34,23 @@ import kotlinx.coroutines.delay
 @Composable
 fun NavGraph(firebaseManager: FirebaseManager) {
     Log.d("NavGraph", "=== NavGraph COMPOSABLE STARTED ===")
-    
+
     val navController = rememberNavController()
     val authViewModel: AuthViewModel = hiltViewModel()
     val profileViewModel: ProfileViewModel = hiltViewModel()
     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
     val isAuthStateInitialized by authViewModel.isAuthStateInitialized.collectAsState()
     val shouldRecheckProfile by profileViewModel.shouldRecheckProfile.collectAsState()
-    
+
     Log.d("NavGraph", "NavGraph - isAuthenticated: $isAuthenticated")
     Log.d("NavGraph", "NavGraph - isAuthStateInitialized: $isAuthStateInitialized")
     Log.d("NavGraph", "NavGraph - shouldRecheckProfile: $shouldRecheckProfile")
-    
+
     // Simple state management
     var profileComplete by rememberSaveable { mutableStateOf<Boolean?>(null) }
-    
+
     Log.d("NavGraph", "NavGraph - profileComplete: $profileComplete")
-    
+
     val items = listOf(
         bottomNavigationItem(name = "Tournaments", icon = Icons.Outlined.EmojiEvents),
         bottomNavigationItem(name = "My Tournaments", icon = Icons.Outlined.SportsCricket),
@@ -62,7 +62,7 @@ fun NavGraph(firebaseManager: FirebaseManager) {
     val currentDestinationAsState = navController.currentBackStackEntryAsState()
     val currentDestination = currentDestinationAsState.value?.destination?.route
     val shouldShowBottomBar = remember { mutableStateOf(true) }
-    
+
     // Debug logging for route detection
     LaunchedEffect(currentDestination) {
         Log.d("NavGraph", "Current destination: $currentDestination")
@@ -74,31 +74,31 @@ fun NavGraph(firebaseManager: FirebaseManager) {
         Log.d("NavGraph", "LaunchedEffect - isAuthenticated: $isAuthenticated")
         Log.d("NavGraph", "LaunchedEffect - isAuthStateInitialized: $isAuthStateInitialized")
         Log.d("NavGraph", "LaunchedEffect - shouldRecheckProfile: $shouldRecheckProfile")
-        
+
         if (!isAuthStateInitialized) {
             Log.d("NavGraph", "LaunchedEffect - Auth state not initialized yet, waiting...")
             // Still loading
             return@LaunchedEffect
         }
-        
+
         if (!isAuthenticated) {
             Log.d("NavGraph", "LaunchedEffect - User not authenticated, resetting profile complete")
             // User not authenticated
             profileComplete = null
             return@LaunchedEffect
         }
-        
+
         // User is authenticated, check profile completeness
         if (profileComplete == null || shouldRecheckProfile) {
             Log.d("NavGraph", "LaunchedEffect - Checking profile completeness")
-            
+
             // Add a small delay to ensure NavHost is ready
             delay(100)
-            
+
             profileViewModel.isProfileCompleteAsync { complete ->
                 profileComplete = complete
                 Log.d("NavGraph", "LaunchedEffect - Profile completeness result: $complete")
-                
+
                 // Navigate to ProfileSetupScreen if profile is incomplete
                 if (complete == false) {
                     Log.d("NavGraph", "LaunchedEffect - Profile incomplete, navigating to ProfileSetupScreen")
@@ -107,7 +107,7 @@ fun NavGraph(firebaseManager: FirebaseManager) {
                         launchSingleTop = true
                     }
                 }
-                
+
                 if (shouldRecheckProfile) {
                     Log.d("NavGraph", "LaunchedEffect - Resetting recheck profile flag")
                     profileViewModel.resetRecheckProfile()
@@ -131,26 +131,26 @@ fun NavGraph(firebaseManager: FirebaseManager) {
         } && isAuthenticated
     }
 
-     Box {
-         Scaffold(
-             modifier = Modifier.fillMaxSize(),
-             bottomBar = {
+    Box {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            bottomBar = {
                 Log.d("NavGraph", "Bottom bar visibility check:")
                 Log.d("NavGraph", "  - shouldShowBottomBar: ${shouldShowBottomBar.value}")
                 Log.d("NavGraph", "  - isAuthenticated: $isAuthenticated")
                 Log.d("NavGraph", "  - profileComplete: $profileComplete")
                 Log.d("NavGraph", "  - Will show bottom bar: ${shouldShowBottomBar.value && isAuthenticated}")
-                
-                 if (shouldShowBottomBar.value && isAuthenticated) {
-                     NavigationBar(
-                         containerColor = Color.Black,
-                         tonalElevation = 0.dp,
-                         windowInsets = NavigationBarDefaults.windowInsets,
-                         modifier = Modifier
-                             .background(Color.Black)
-                             .height(70.dp)
-                     ) {
-                         items.forEachIndexed { index, bottomNavigationItem ->
+
+                if (shouldShowBottomBar.value && isAuthenticated) {
+                    NavigationBar(
+                        containerColor = Color.Black,
+                        tonalElevation = 0.dp,
+                        windowInsets = NavigationBarDefaults.windowInsets,
+                        modifier = Modifier
+                            .background(Color.Black)
+                            .height(70.dp)
+                    ) {
+                        items.forEachIndexed { index, bottomNavigationItem ->
                             val isSelected = when (index) {
                                 0 -> currentDestination?.contains("TournamentsScreen") == true && !currentDestination.contains("MyTournamentsScreen")
                                 1 -> currentDestination?.contains("MyTournamentsScreen") == true
@@ -160,10 +160,10 @@ fun NavGraph(firebaseManager: FirebaseManager) {
                                 else -> false
                             }
 
-                             NavigationBarItem(
-                                 selected = isSelected,
-                                 onClick = {
-                                     when (index) {
+                            NavigationBarItem(
+                                selected = isSelected,
+                                onClick = {
+                                    when (index) {
                                         0 -> navController.navigate(ScreenRoutes.TournamentsScreen) {
                                             popUpTo(ScreenRoutes.TournamentsScreen) { inclusive = true }
                                             launchSingleTop = true
@@ -184,8 +184,8 @@ fun NavGraph(firebaseManager: FirebaseManager) {
                                             popUpTo(ScreenRoutes.MoreScreen) { inclusive = true }
                                             launchSingleTop = true
                                         }
-                                   }
-                                 },
+                                    }
+                                },
 //                                 icon = {
 //                                     Column(
 //                                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -217,71 +217,71 @@ fun NavGraph(firebaseManager: FirebaseManager) {
 //                                 },
 
 
-                                 icon = {
-                                     Box(
-                                         modifier = Modifier
-                                             .fillMaxWidth()
-                                             .height(70.dp) // same height as NavigationBar
-                                     ) {
-                                         if (isSelected) {
-                                             Box(
-                                                 modifier = Modifier
-                                                     .fillMaxWidth()
-                                                     .height(40.dp) // Reaches from top down to icon
-                                                     .align(Alignment.TopCenter)
-                                                     .background(
-                                                         brush = Brush.verticalGradient(
-                                                             colors = listOf(
-                                                                 Color.Cyan.copy(alpha = 0.5f),
-                                                                 Color.Cyan.copy(alpha = 0.2f),
-                                                                 Color.Transparent
-                                                             )
-                                                         )
-                                                     )
-                                             )
+                                icon = {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(70.dp) // same height as NavigationBar
+                                    ) {
+                                        if (isSelected) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(40.dp) // Reaches from top down to icon
+                                                    .align(Alignment.TopCenter)
+                                                    .background(
+                                                        brush = Brush.verticalGradient(
+                                                            colors = listOf(
+                                                                Color.Cyan.copy(alpha = 0.5f),
+                                                                Color.Cyan.copy(alpha = 0.2f),
+                                                                Color.Transparent
+                                                            )
+                                                        )
+                                                    )
+                                            )
 
 
-                                             Box(
-                                                 modifier = Modifier
-                                                     .align(Alignment.TopCenter)
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.TopCenter)
 //                                                     .width(40.dp)
-                                                     .fillMaxWidth()
-                                                     .height(4.dp)
-                                                     .background(
-                                                         color = Color.Cyan,
-                                                         shape = RoundedCornerShape(2.dp)
-                                                     )
-                                             )
-                                         }
+                                                    .fillMaxWidth()
+                                                    .height(4.dp)
+                                                    .background(
+                                                        color = Color.Cyan,
+                                                        shape = RoundedCornerShape(2.dp)
+                                                    )
+                                            )
+                                        }
 
-                                         Icon(
-                                             imageVector = bottomNavigationItem.icon,
-                                             contentDescription = bottomNavigationItem.name,
-                                             tint = if (isSelected) Color.Cyan else Color.White,
-                                             modifier = Modifier
-                                                 .align(Alignment.Center)
-                                                 .size(24.dp)
-                                         )
-                                     }
-                                 },
+                                        Icon(
+                                            imageVector = bottomNavigationItem.icon,
+                                            contentDescription = bottomNavigationItem.name,
+                                            tint = if (isSelected) Color.Cyan else Color.White,
+                                            modifier = Modifier
+                                                .align(Alignment.Center)
+                                                .size(24.dp)
+                                        )
+                                    }
+                                },
 
-                                 alwaysShowLabel = false, // Hide labels for a cleaner look
+                                alwaysShowLabel = false, // Hide labels for a cleaner look
 
-                                 colors = NavigationBarItemDefaults.colors(
-                                     indicatorColor = Color.Transparent
-                                 ) // removes the gray background
-                             )
-
-
+                                colors = NavigationBarItemDefaults.colors(
+                                    indicatorColor = Color.Transparent
+                                ) // removes the gray background
+                            )
 
 
 
 
-                         }
-                     }
-                 }
-             }
-         ) { innerPadding ->
+
+
+                        }
+                    }
+                }
+            }
+        ) { innerPadding ->
             if (!isAuthStateInitialized) {
                 // Loading state
                 Box(
@@ -310,14 +310,14 @@ fun NavGraph(firebaseManager: FirebaseManager) {
                         SubNavigation.HomeNavGraph
                     }
                 }
-                
+
                 Log.d("NavGraph", "NavHost - Final start destination: $startDestination")
-                
-                 NavHost(
-                     navController = navController,
+
+                NavHost(
+                    navController = navController,
                     startDestination = startDestination
-                 ) {
-                     navigation<SubNavigation.AuthNavGraph>(startDestination = ScreenRoutes.LoginScreen) {
+                ) {
+                    navigation<SubNavigation.AuthNavGraph>(startDestination = ScreenRoutes.LoginScreen) {
                         composable<ScreenRoutes.LoginScreen> {
                             LoginScreenUI(
                                 navController = navController,
@@ -341,25 +341,25 @@ fun NavGraph(firebaseManager: FirebaseManager) {
 //                                }
                             )
                         }
-                     }
+                    }
 //                     }
 
-                     navigation<SubNavigation.HomeNavGraph>(startDestination = ScreenRoutes.TournamentsScreen) {
-                         composable<ScreenRoutes.TournamentsScreen> {
-                             LegacyTournamentsScreenUI(
-                                 navController = navController,
+                    navigation<SubNavigation.HomeNavGraph>(startDestination = ScreenRoutes.TournamentsScreen) {
+                        composable<ScreenRoutes.TournamentsScreen> {
+                            LegacyTournamentsScreenUI(
+                                navController = navController,
 //                                 onNavigateToMyTournaments = {
 //                                     navController.navigate(ScreenRoutes.MyTournamentsScreen) {
 //                                         launchSingleTop = true
 //                                     }
 //                                 }
-                             )
-                         }
-                         
-                         composable<ScreenRoutes.MyTournamentsScreen> {
+                            )
+                        }
+
+                        composable<ScreenRoutes.MyTournamentsScreen> {
                             MyTournamentsScreen(
-                                onNavigateToTournaments = { 
-                                       navController.navigate(ScreenRoutes.TournamentsScreen) {
+                                onNavigateToTournaments = {
+                                    navController.navigate(ScreenRoutes.TournamentsScreen) {
                                         popUpTo(ScreenRoutes.TournamentsScreen) { inclusive = true }
                                         launchSingleTop = true
                                     }
@@ -376,8 +376,8 @@ fun NavGraph(firebaseManager: FirebaseManager) {
                                 },
                                 onBackClick = { navController.popBackStack() }
                             )
-                        } 
-                         composable<ScreenRoutes.WalletScreen> {
+                        }
+                        composable<ScreenRoutes.WalletScreen> {
                             WalletScreen(navController = navController)
                         }
                         composable<ScreenRoutes.TransactionHistoryScreen> {
@@ -402,19 +402,19 @@ fun NavGraph(firebaseManager: FirebaseManager) {
                         composable<ScreenRoutes.AlertsScreen> {
                             AlertsScreenUI(navController = navController)
                         }
-                         composable<ScreenRoutes.MoreScreen> {
-                             MoreScreenUI(navController = navController)
-                         }
-                         composable<ScreenRoutes.ProfileScreen> {
-                             ProfileScreenUI(navController = navController)
-                         }
-                         composable<ScreenRoutes.KycScreen> {
-                             KycScreen(navController = navController)
-                         }
+                        composable<ScreenRoutes.MoreScreen> {
+                            MoreScreenUI(navController = navController)
+                        }
+                        composable<ScreenRoutes.ProfileScreen> {
+                            ProfileScreenUI(navController = navController)
+                        }
+                        composable<ScreenRoutes.KycScreen> {
+                            KycScreen(navController = navController)
+                        }
                         composable<ScreenRoutes.ProfileSetupScreen> {
                             ProfileSetupScreenUI(navController = navController)
                         }
-                         // Tournament Details Screen
+                        // Tournament Details Screen
 //                         composable(
 //                             route = Screen.TournamentDetails.route,
 //                             arguments = listOf(navArgument("tournamentId") { type = NavType.StringType })
@@ -426,60 +426,68 @@ fun NavGraph(firebaseManager: FirebaseManager) {
 //                                 onBackClick = { navController.popBackStack() }
 //                             )
 //                         }
-                         composable(
-                             route = Screen.TournamentDetails.route,
-                             arguments = listOf(
-                                 navArgument("tournamentId") {
-                                     type = androidx.navigation.NavType.StringType
-                                 }
-                             )
-                         ) { backStackEntry ->
-                             val tournamentId = backStackEntry.arguments?.getString("tournamentId")
-                             if (tournamentId != null) {
-                                 TournamentDetailsScreenUI(
-                                     tournamentId = tournamentId,
-                                     navController = navController
-                                 )
-                             }
-                         }
-                         
-                         // Victory Pass Screen
-                         composable(
-                             route = Screen.VictoryPass.route,
-                             arguments = listOf(navArgument("tournamentId") { type = NavType.StringType })
-                         ) { backStackEntry ->
-                             val tournamentId = backStackEntry.arguments?.getString("tournamentId") ?: return@composable
-                             VictoryPassScreen(
-                                 tournamentId = tournamentId,
-                                 onBackClick = { navController.popBackStack() },
-                                 onNavigateToRules = { /* TODO: Navigate to rules */ }
-                             )
-                         }
+                        composable(
+                            route = Screen.TournamentDetails.route,
+                            arguments = listOf(
+                                navArgument("tournamentId") {
+                                    type = androidx.navigation.NavType.StringType
+                                }
+                            )
+                        ) { backStackEntry ->
+                            val tournamentId = backStackEntry.arguments?.getString("tournamentId")
+                            if (tournamentId != null) {
+                                TournamentDetailsScreenUI(
+                                    tournamentId = tournamentId,
+                                    navController = navController
+                                )
+                            }
+                        }
+
+                        // Victory Pass Screen
+                        composable(
+                            route = Screen.VictoryPass.route,
+                            arguments = listOf(navArgument("tournamentId") { type = NavType.StringType })
+                        ) { backStackEntry ->
+                            val tournamentId = backStackEntry.arguments?.getString("tournamentId") ?: return@composable
+                            VictoryPassScreen(
+                                tournamentId = tournamentId,
+                                // ⭐️ UPDATED: Navigate to TournamentsScreen and clear the back stack
+                                onBackClick = {
+                                    navController.navigate(ScreenRoutes.TournamentsScreen) {
+                                        // Pop up to the Tournaments screen (or MyTournamentsScreen)
+                                        // to clear any details/pass screens related to this tournament
+                                        popUpTo(ScreenRoutes.TournamentsScreen) {
+                                            // Make sure to remove the current VictoryPass screen and any previous detail screens
+                                            inclusive = true
+                                        }
+                                        launchSingleTop = true
+                                    }
+                                },
+                                onNavigateToRules = { /* TODO: Navigate to rules */ }
+                            )
+                        }
 
 
-                         // Add this nested navigation inside your HomeNavGraph
-                         navigation<SubNavigation.RegistrationNavGraph>(
-                             startDestination = ScreenRoutes.TournamentRegistration("", 1)
+                        // Add this nested navigation inside your HomeNavGraph
+                        navigation<SubNavigation.RegistrationNavGraph>(
+                            startDestination = ScreenRoutes.TournamentRegistration("", 1)
 
-                         ) {
-                             composable<ScreenRoutes.TournamentRegistration> { backStackEntry ->
-                                 val args = backStackEntry.toRoute<ScreenRoutes.TournamentRegistration>()
-                                 RegistrationFlowScreen(
-                                     tournamentId = args.tournamentId,
-                                     stepIndex = args.stepIndex,
-                                     navController = navController
-                                 )
-                             }
-                         }
+                        ) {
+                            composable<ScreenRoutes.TournamentRegistration> { backStackEntry ->
+                                val args = backStackEntry.toRoute<ScreenRoutes.TournamentRegistration>()
+                                RegistrationFlowScreen(
+                                    tournamentId = args.tournamentId,
+                                    stepIndex = args.stepIndex,
+                                    navController = navController
+                                )
+                            }
+                        }
 
-                     }
-                 }
+                    }
+                }
             }
-         }
-     }
+        }
+    }
 }
 
 data class bottomNavigationItem(val name: String, val icon: ImageVector)
-
-
-

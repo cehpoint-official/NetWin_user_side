@@ -12,6 +12,7 @@ import com.cehpoint.netwin.domain.repository.UserRepository
 import com.cehpoint.netwin.domain.repository.WalletRepository
 import com.cehpoint.netwin.presentation.events.RegistrationFlowEvent
 import com.cehpoint.netwin.presentation.viewmodels.TournamentViewModel
+import com.cehpoint.netwin.util.NetworkStateMonitor // <--- ADDED IMPORT
 import com.google.common.truth.Truth.assertThat
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
@@ -39,22 +40,26 @@ class TournamentViewModelPersistenceTest {
     private lateinit var mockUserRepository: UserRepository
     private lateinit var mockWalletRepository: WalletRepository
     private lateinit var mockDataStoreManager: DataStoreManager
+    private lateinit var mockNetworkStateMonitor: NetworkStateMonitor // Added mock dependency
 
     @Before
     fun setUp() {
         hiltRule.inject()
-        mockRepository = mockk()
-        mockFirebaseManager = mockk()
-        mockUserRepository = mockk()
-        mockWalletRepository = mockk()
-        mockDataStoreManager = mockk()
+        mockRepository = mockk(relaxed = true)
+        mockFirebaseManager = mockk(relaxed = true)
+        mockUserRepository = mockk(relaxed = true)
+        mockWalletRepository = mockk(relaxed = true)
+        mockWalletRepository = mockk(relaxed = true)
+        mockDataStoreManager = mockk(relaxed = true)
+        // FIX: Specify the type explicitly for mockk to resolve the ambiguity
+        mockNetworkStateMonitor = mockk<NetworkStateMonitor>(relaxed = true)
     }
 
     @Test
     fun testCurrentStepPersistenceAfterProcessDeath() = runTest {
         // Create a Bundle to simulate saved state from the system
         val savedStateBundle = Bundle()
-        
+
         // First instance: Create ViewModel and advance to PAYMENT step
         val firstSavedStateHandle = SavedStateHandle(savedStateBundle)
         val firstViewModel = TournamentViewModel(
@@ -63,52 +68,53 @@ class TournamentViewModelPersistenceTest {
             userRepository = mockUserRepository,
             walletRepository = mockWalletRepository,
             dataStoreManager = mockDataStoreManager,
+            networkStateMonitor = mockNetworkStateMonitor,
             savedStateHandle = firstSavedStateHandle
         )
-        
+
         // Initial state should be REVIEW
         assertThat(firstViewModel.currentStep.value).isEqualTo(RegistrationStep.REVIEW)
-        
+
         // Advance to PAYMENT step
         firstViewModel.nextStep()
         assertThat(firstViewModel.currentStep.value).isEqualTo(RegistrationStep.PAYMENT)
-        
+
         // Simulate the system saving the state
         firstSavedStateHandle.setSavedStateProvider("current_step") {
             Bundle().apply {
                 putSerializable("current_step", firstViewModel.currentStep.value)
             }
         }
-        
+
         // Second instance: Create new ViewModel with the saved state (simulating process recreation)
         val secondSavedStateHandle = SavedStateHandle().apply {
             set("current_step", RegistrationStep.PAYMENT)
         }
-        
+
         val secondViewModel = TournamentViewModel(
             repository = mockRepository,
             firebaseManager = mockFirebaseManager,
             userRepository = mockUserRepository,
             walletRepository = mockWalletRepository,
             dataStoreManager = mockDataStoreManager,
+            networkStateMonitor = mockNetworkStateMonitor,
             savedStateHandle = secondSavedStateHandle
         )
-        
+
         // Verify that the step was restored
         assertThat(secondViewModel.currentStep.value).isEqualTo(RegistrationStep.PAYMENT)
     }
-    
+
     @Test
     fun testStepDataPersistenceAfterProcessDeath() = runTest {
         // Create test data
         val testStepData = RegistrationStepData(
-            //inGameId = "TestPlayer123",
             teamName = "TestTeam",
             paymentMethod = "wallet",
             termsAccepted = true,
             tournamentId = "tournament-123"
         )
-        
+
         // First instance: Create ViewModel and update step data
         val firstSavedStateHandle = SavedStateHandle()
         val firstViewModel = TournamentViewModel(
@@ -117,51 +123,50 @@ class TournamentViewModelPersistenceTest {
             userRepository = mockUserRepository,
             walletRepository = mockWalletRepository,
             dataStoreManager = mockDataStoreManager,
+            networkStateMonitor = mockNetworkStateMonitor,
             savedStateHandle = firstSavedStateHandle
         )
-        
+
         // Update step data using the event handler
         firstViewModel.onRegistrationEvent(
             RegistrationFlowEvent.UpdateData { testStepData }
         )
-        
+
         // Verify data was updated
-        //assertThat(firstViewModel.stepData.value.inGameId).isEqualTo("TestPlayer123")
         assertThat(firstViewModel.stepData.value.teamName).isEqualTo("TestTeam")
         assertThat(firstViewModel.stepData.value.tournamentId).isEqualTo("tournament-123")
-        
+
         // Second instance: Create new ViewModel with the saved state
         val secondSavedStateHandle = SavedStateHandle().apply {
             set("step_data", testStepData)
         }
-        
+
         val secondViewModel = TournamentViewModel(
             repository = mockRepository,
             firebaseManager = mockFirebaseManager,
             userRepository = mockUserRepository,
             walletRepository = mockWalletRepository,
             dataStoreManager = mockDataStoreManager,
+            networkStateMonitor = mockNetworkStateMonitor,
             savedStateHandle = secondSavedStateHandle
         )
-        
+
         // Verify that the step data was restored
-        //assertThat(secondViewModel.stepData.value.inGameId).isEqualTo("TestPlayer123")
         assertThat(secondViewModel.stepData.value.teamName).isEqualTo("TestTeam")
         assertThat(secondViewModel.stepData.value.tournamentId).isEqualTo("tournament-123")
         assertThat(secondViewModel.stepData.value.termsAccepted).isTrue()
     }
-    
+
     @Test
     fun testCompleteRegistrationFlowStateAfterProcessDeath() = runTest {
         // Create test data
         val testStepData = RegistrationStepData(
-            //inGameId = "PlayerX",
             teamName = "TeamAwesome",
             paymentMethod = "wallet",
             termsAccepted = false,
             tournamentId = "epic-tournament"
         )
-        
+
         // First instance: Create ViewModel and simulate user interaction
         val firstSavedStateHandle = SavedStateHandle()
         val firstViewModel = TournamentViewModel(
@@ -170,49 +175,50 @@ class TournamentViewModelPersistenceTest {
             userRepository = mockUserRepository,
             walletRepository = mockWalletRepository,
             dataStoreManager = mockDataStoreManager,
+            networkStateMonitor = mockNetworkStateMonitor,
             savedStateHandle = firstSavedStateHandle
         )
-        
+
         // Simulate user progressing through registration
         firstViewModel.onRegistrationEvent(RegistrationFlowEvent.UpdateData { testStepData })
         firstViewModel.onRegistrationEvent(RegistrationFlowEvent.Next)
         firstViewModel.onRegistrationEvent(RegistrationFlowEvent.Next)
-        
+
         // Should be at DETAILS step
         assertThat(firstViewModel.currentStep.value).isEqualTo(RegistrationStep.DETAILS)
-        
+
         // Second instance: Simulate process death and recreation
         val secondSavedStateHandle = SavedStateHandle().apply {
             set("current_step", RegistrationStep.DETAILS)
             set("step_data", testStepData)
         }
-        
+
         val secondViewModel = TournamentViewModel(
             repository = mockRepository,
             firebaseManager = mockFirebaseManager,
             userRepository = mockUserRepository,
             walletRepository = mockWalletRepository,
             dataStoreManager = mockDataStoreManager,
+            networkStateMonitor = mockNetworkStateMonitor,
             savedStateHandle = secondSavedStateHandle
         )
-        
+
         // Verify complete state restoration
         assertThat(secondViewModel.currentStep.value).isEqualTo(RegistrationStep.DETAILS)
-        //assertThat(secondViewModel.stepData.value.inGameId).isEqualTo("PlayerX")
         assertThat(secondViewModel.stepData.value.teamName).isEqualTo("TeamAwesome")
         assertThat(secondViewModel.stepData.value.tournamentId).isEqualTo("epic-tournament")
-        
+
         // Continue with the flow to verify it still works after restoration
         secondViewModel.onRegistrationEvent(
             RegistrationFlowEvent.UpdateData { it.copy(termsAccepted = true) }
         )
         secondViewModel.onRegistrationEvent(RegistrationFlowEvent.Next)
-        
+
         // Should now be at CONFIRM step
         assertThat(secondViewModel.currentStep.value).isEqualTo(RegistrationStep.CONFIRM)
         assertThat(secondViewModel.stepData.value.termsAccepted).isTrue()
     }
-    
+
     @Test
     fun testDefaultStateWhenNoSavedStateExists() = runTest {
         // Create ViewModel with empty SavedStateHandle (no saved state)
@@ -223,13 +229,13 @@ class TournamentViewModelPersistenceTest {
             userRepository = mockUserRepository,
             walletRepository = mockWalletRepository,
             dataStoreManager = mockDataStoreManager,
+            networkStateMonitor = mockNetworkStateMonitor,
             savedStateHandle = emptySavedStateHandle
         )
-        
+
         // Verify default state
         assertThat(viewModel.currentStep.value).isEqualTo(RegistrationStep.REVIEW)
         assertThat(viewModel.stepData.value).isEqualTo(RegistrationStepData())
-        //assertThat(viewModel.stepData.value.inGameId).isEmpty()
         assertThat(viewModel.stepData.value.teamName).isEmpty()
         assertThat(viewModel.stepData.value.tournamentId).isEmpty()
         assertThat(viewModel.stepData.value.termsAccepted).isFalse()

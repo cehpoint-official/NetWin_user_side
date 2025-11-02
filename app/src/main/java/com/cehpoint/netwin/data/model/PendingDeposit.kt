@@ -28,6 +28,12 @@ data class PendingDeposit(
     val transactionReference: String? = null,
     val paymentProvider: String? = null, // FLUTTERWAVE, PAYSTACK, etc.
     val userCountry: String = "IN", // IN for India, NG for Nigeria
+
+    // --- NEW FIELDS FOR USER DETAILS (Already correct) ---
+    val userName: String? = null,
+    val userEmail: String? = null,
+    // --- END: NEW FIELDS ---
+
     @ServerTimestamp
     val createdAt: Timestamp? = null,
     val updatedAt: Timestamp? = null
@@ -35,4 +41,4 @@ data class PendingDeposit(
 
 enum class DepositStatus {
     PENDING, APPROVED, REJECTED
-} 
+}

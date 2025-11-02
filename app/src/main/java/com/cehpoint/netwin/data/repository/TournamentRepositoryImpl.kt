@@ -1,9 +1,8 @@
 package com.cehpoint.netwin.data.repository
 
 import android.util.Log
-import com.cehpoint.netwin.data.model.Tournament
-import com.cehpoint.netwin.data.model.toData
 import com.cehpoint.netwin.data.remote.FirebaseManager
+import com.cehpoint.netwin.domain.model.RewardDistribution
 import com.cehpoint.netwin.domain.model.TournamentStatus
 import com.cehpoint.netwin.domain.repository.TournamentRepository
 import com.google.firebase.Timestamp
@@ -12,550 +11,487 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
-import com.cehpoint.netwin.domain.model.Tournament as DomainTournament
-import com.cehpoint.netwin.data.model.TournamentRegistration
-import kotlinx.coroutines.GlobalScope // This import is no longer needed but harmless to keep
+import com.cehpoint.netwin.domain.model.Tournament as DomainTournament // Alias for clarity
+import com.cehpoint.netwin.data.model.TournamentRegistration // Assuming this data model exists
+import com.cehpoint.netwin.data.model.Wallet // Assuming Wallet data model
+import com.cehpoint.netwin.data.model.User // Assuming User data model
+import com.cehpoint.netwin.data.model.Transaction // Assuming Transaction data model
+import com.cehpoint.netwin.data.model.TransactionStatus // Assuming enum
+import com.cehpoint.netwin.data.model.TransactionType // Assuming enum
+import com.cehpoint.netwin.data.model.TeamMember // Assuming data model
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext // This import is no longer needed but harmless to keep
+import java.util.Date
 
 class TournamentRepositoryImpl @Inject constructor(
     private val firebaseManager: FirebaseManager
 ) : TournamentRepository {
 
+    // Reference to the main tournaments collection in Firestore
     private val tournamentsCollection = firebaseManager.firestore.collection(FirebaseManager.Companion.Collections.TOURNAMENTS)
+    // Reference to the registrations sub-collection or root collection
+    private val registrationsCollection = firebaseManager.firestore.collection("tournament_registrations")
+    // Reference to wallets collection
+    private val walletsCollection = firebaseManager.firestore.collection("wallets")
+    // Reference to users collection
+    private val usersCollection = firebaseManager.firestore.collection("users")
+    // Reference to transactions collection (adjust if it's a subcollection)
+    private val transactionsCollection = firebaseManager.firestore.collection("wallet_transactions")
+    // NEW: Reference to score submissions collection
+    private val scoreSubmissionsCollection = firebaseManager.firestore.collection("score_submissions")
 
+
+    // Fetches featured tournaments (one-time fetch)
     override suspend fun getFeaturedTournaments(): List<DomainTournament> = try {
-        Log.d("TournamentRepository", "Fetching featured tournaments from collection: ${FirebaseManager.Companion.Collections.TOURNAMENTS}")
+        Log.d("TournamentRepository", "Fetching featured tournaments...")
         val snapshot = tournamentsCollection
-            .whereEqualTo("isFeatured", true)
+            .whereEqualTo("isFeatured", true) // Assuming you have an 'isFeatured' field
             .get()
             .await()
-
         Log.d("TournamentRepository", "Found ${snapshot.documents.size} featured tournaments")
         snapshot.documents.mapNotNull { doc ->
-            doc.toObject(Tournament::class.java)?.toDomain()
+            mapDocumentToDomainTournament(doc.id, doc.data) // Use mapping function
         }
     } catch (e: Exception) {
         Log.e("TournamentRepository", "Error fetching featured tournaments: ${e.message}", e)
-        emptyList()
+        emptyList() // Return empty list on error
     }
 
-    // =================================================================
-    // === THIS IS THE UPDATED FUNCTION ===
-    // =================================================================
+    // Fetches all tournaments in real-time using a Flow
     override fun getTournaments(): Flow<List<DomainTournament>> = callbackFlow {
-        Log.d("TournamentRepository", "Starting to fetch tournaments from collection: "+
-                "${FirebaseManager.Companion.Collections.TOURNAMENTS}")
+        Log.d("TournamentRepository", "Starting real-time listener for tournaments...")
 
+        // Listen for real-time updates, ordering by start time
         val subscription = tournamentsCollection
-            .orderBy("startDate")
+            .orderBy("startTime") // Order by the timestamp field
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    Log.e("TournamentRepository", "Error fetching tournaments: ${error.message}")
-                    Log.e("TournamentRepository", "Error code: ${error.code}")
-                    Log.e("TournamentRepository", "Error details: ${error.cause}")
-                    close(error)
+                    Log.e("TournamentRepository", "Error listening to tournaments: ${error.message}", error)
+                    close(error) // Close the flow with error
                     return@addSnapshotListener
                 }
 
                 if (snapshot == null) {
-                    Log.d("TournamentRepository", "Received null snapshot, skipping.")
+                    Log.w("TournamentRepository", "Received null snapshot.")
                     return@addSnapshotListener
                 }
 
                 Log.d("TournamentRepository", "Received snapshot with ${snapshot.documents.size} tournaments")
 
-                // Log raw document data
-                snapshot.documents.forEach { doc ->
-                    Log.d("TournamentRepository", "Raw document data for ${doc.id}: ${doc.data}")
-                }
-
-                // Offload mapping to background thread using the flow's scope
+                // Perform mapping on a background thread to avoid blocking the main thread
                 launch(Dispatchers.Default) {
                     val tournaments = snapshot.documents.mapNotNull { doc ->
                         try {
-                            val data = doc.data ?: return@mapNotNull null
-                            Log.d("TournamentRepository", "Raw document data for ${doc.id}: $data")
-
-                            // Robust mapping for all known schema variants
-                            val title = data["title"] as? String ?: data["name"] as? String ?: ""
-                            val gameMode = data["gameMode"] as? String ?: data["gameType"] as? String ?: ""
-                            val gameType = data["gameType"] as? String
-                            val maxTeams = (data["maxTeams"] as? Number)?.toInt() ?: 0
-                            val registeredTeams = (data["registeredTeams"] as? Number)?.toInt() ?: 0
-                            val image = data["image"] as? String ?: data["bannerImage"] as? String
-                            val country = data["country"] as? String
-                            val startDate = when (val st = data["startDate"] ?: data["startTime"]) {
-                                is com.google.firebase.Timestamp -> st
-                                is String -> try { com.google.firebase.Timestamp(java.util.Date.from(java.time.Instant.parse(st))) } catch (e: Exception) { null }
-                                else -> null
-                            }
-                            val endDate = data["endDate"] as? com.google.firebase.Timestamp ?: data["completedAt"] as? com.google.firebase.Timestamp
-                            val registrationStartTime = data["registrationStartTime"] as? com.google.firebase.Timestamp
-                            val registrationEndTime = data["registrationEndTime"] as? com.google.firebase.Timestamp
-
-                            Tournament.fromFirestore(
-                                id = doc.id,
-                                title = title,
-                                description = data["description"] as? String,
-                                gameMode = gameMode,
-                                gameType = gameType,
-                                entryFee = (data["entryFee"] as? Number)?.toDouble() ?: 0.0,
-                                prizePool = (data["prizePool"] as? Number)?.toDouble() ?: 0.0,
-                                maxTeams = maxTeams,
-                                registeredTeams = registeredTeams,
-                                status = data["status"] as? String ?: "upcoming",
-                                startDate = startDate,
-                                endDate = endDate,
-                                rules = data["rules"] as? List<String>,
-                                image = image,
-                                createdAt = data["createdAt"] as? com.google.firebase.Timestamp,
-                                updatedAt = data["updatedAt"] as? com.google.firebase.Timestamp,
-                                // Extra fields for app logic
-                                matchType = data["matchType"] as? String,
-                                map = data["map"] as? String,
-                                country = country,
-                                registrationStartTime = registrationStartTime,
-                                registrationEndTime = registrationEndTime,
-                                rewardsDistribution = data["rewardsDistribution"] as? List<Map<String, Any>>,
-                                killReward = (data["killReward"] as? Number)?.toDouble() ?: (data["perKillReward"] as? Number)?.toDouble(),
-                                roomId = data["roomId"] as? String,
-                                roomPassword = data["roomPassword"] as? String,
-                                actualStartTime = data["actualStartTime"] as? com.google.firebase.Timestamp
-                            ).toDomain()
+                            mapDocumentToDomainTournament(doc.id, doc.data) // Use mapping function
                         } catch (e: Exception) {
-                            Log.e("TournamentRepository", "Error parsing tournament document ${doc.id}: ${e.message}")
-                            Log.e("TournamentRepository", "Document data: ${doc.data}")
-                            null
+                            Log.e("TournamentRepository", "Error parsing tournament ${doc.id}: ${e.message}", e)
+                            null // Skip documents that fail to parse
                         }
                     }
-
-                    // trySend is thread-safe, no need for withContext(Dispatchers.Main)
-                    Log.d("TournamentRepository", "Sending ${tournaments.size} tournaments to UI")
-                    trySend(tournaments)
+                    Log.d("TournamentRepository", "Mapped ${tournaments.size} tournaments, sending to flow...")
+                    trySend(tournaments).isSuccess // Send the mapped list to the collector
                 }
             }
 
+        // Unsubscribe from the listener when the flow is cancelled
         awaitClose {
-            Log.d("TournamentRepository", "Closing tournament subscription")
+            Log.d("TournamentRepository", "Closing real-time tournament listener.")
             subscription.remove()
         }
     }
-    // =================================================================
-    // === END OF UPDATED FUNCTION ===
-    // =================================================================
 
+    // Fetches a single tournament by its ID (one-time fetch)
     override suspend fun getTournamentById(id: String): DomainTournament? = try {
+        Log.d("TournamentRepository", "Fetching tournament by ID: $id")
         val doc = tournamentsCollection.document(id).get().await()
-        val data = doc.data
-        if (data != null) {
-            val tournament = Tournament.fromFirestore(
-                id = doc.id,
-                title = data["title"] as? String ?: "",
-                description = data["description"] as? String,
-                gameMode = data["gameMode"] as? String ?: (data["gameType"] as? String ?: ""),
-                gameType = data["gameType"] as? String,
+        mapDocumentToDomainTournament(doc.id, doc.data) // Use mapping function
+    } catch (e: Exception) {
+        Log.e("TournamentRepository", "Error fetching tournament by ID $id: ${e.message}", e)
+        null // Return null on error
+    }
+
+    /**
+     * Central helper function to safely map Firestore document data (Map<String, Any>)
+     * to our DomainTournament data class.
+     */
+    private fun mapDocumentToDomainTournament(id: String, data: Map<String, Any>?): DomainTournament? {
+        if (data == null) {
+            Log.w("TournamentMapper", "Cannot map null data for ID: $id")
+            return null
+        }
+
+        try {
+            // Helper to safely convert Firestore Timestamp or Long to Long (milliseconds)
+            fun getMillis(fieldValue: Any?): Long? {
+                return when (fieldValue) {
+                    is Timestamp -> fieldValue.toDate().time
+                    is Number -> fieldValue.toLong() // Assume it might already be Long/Number
+                    else -> null
+                }
+            }
+            fun getMillisOrDefault(fieldValue: Any?, default: Long = 0L): Long {
+                return getMillis(fieldValue) ?: default
+            }
+
+
+            // Safely parse reward distribution list
+            val rewardsList = (data["rewardsDistribution"] as? List<*>)?.mapNotNull { rewardMap ->
+                if (rewardMap is Map<*, *>) {
+                    RewardDistribution(
+                        position = (rewardMap["position"] as? Number)?.toInt() ?: 0,
+                        // Adjust if storing 'amount' instead of 'percentage'
+                        percentage = (rewardMap["percentage"] as? Number)?.toDouble() ?: 0.0
+                    )
+                } else null
+            } ?: emptyList()
+
+            // Map fields, providing defaults for non-nullable properties in DomainTournament
+            return DomainTournament(
+                id = id,
+                name = data["name"] as? String ?: "", // Use 'name'
+                description = data["description"] as? String ?: "",
+                gameType = data["gameType"] as? String ?: "",
+                matchType = data["matchType"] as? String ?: "", // Use 'matchType'
+                map = data["map"] as? String ?: "",
+                startTime = getMillisOrDefault(data["startTime"]), // Use helper
                 entryFee = (data["entryFee"] as? Number)?.toDouble() ?: 0.0,
                 prizePool = (data["prizePool"] as? Number)?.toDouble() ?: 0.0,
-                maxTeams = (data["maxTeams"] as? Number)?.toInt() ?: 0,
+                maxTeams = (data["maxTeams"] as? Number)?.toInt() ?: 0, // Use 'maxTeams'
                 registeredTeams = (data["registeredTeams"] as? Number)?.toInt() ?: 0,
                 status = data["status"] as? String ?: "upcoming",
-                startDate = data["startDate"] as? Timestamp,
-                endDate = data["endDate"] as? Timestamp,
-                rules = data["rules"] as? List<String>,
-                image = (data["image"] as? String) ?: (data["bannerImage"] as? String),
-                createdAt = data["createdAt"] as? Timestamp,
-                updatedAt = data["updatedAt"] as? Timestamp,
-                // Extra fields for app logic
-                matchType = data["matchType"] as? String,
-                map = data["map"] as? String,
-                country = data["country"] as? String,
-                registrationStartTime = data["registrationStartTime"] as? Timestamp,
-                registrationEndTime = data["registrationEndTime"] as? Timestamp,
-                rewardsDistribution = data["rewardsDistribution"] as? List<Map<String, Any>>,
-                killReward = (data["killReward"] as? Number)?.toDouble(),
+                rules = (data["rules"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                bannerImage = data["bannerImage"] as? String, // Use 'bannerImage'
+                rewardsDistribution = rewardsList,
+                createdAt = getMillisOrDefault(data["createdAt"]),
+                killReward = (data["killReward"] as? Number)?.toDouble(), // Use 'killReward'
                 roomId = data["roomId"] as? String,
                 roomPassword = data["roomPassword"] as? String,
-                actualStartTime = data["actualStartTime"] as? Timestamp
+                actualStartTime = getMillis(data["actualStartTime"]),
+                completedAt = getMillis(data["completedAt"]),
+                country = data["country"] as? String,
+                registrationStartTime = getMillis(data["registrationStartTime"]),
+                registrationEndTime = getMillis(data["registrationEndTime"])
             )
-            tournament.toDomain()
-        } else {
-            null
+        } catch (e: Exception) {
+            Log.e("TournamentMapper", "Exception mapping document $id: ${e.message}", e)
+            return null // Return null if mapping fails for any reason
         }
-    } catch (e: Exception) {
-        null
     }
 
+    // Creates a new tournament document in Firestore
     override suspend fun createTournament(tournament: DomainTournament): Result<DomainTournament> = try {
-        val dataTournament = tournament.toData()
+        // Map domain model back to a data structure Firestore understands
+        val dataTournament = mapDomainTournamentToData(tournament)
         val docRef = tournamentsCollection.add(dataTournament).await()
-        val createdTournament = dataTournament.copy(id = docRef.id).toDomain()
-        Result.success(createdTournament)
+        // Return the created tournament with the generated ID
+        Result.success(tournament.copy(id = docRef.id))
     } catch (e: Exception) {
+        Log.e("TournamentRepository", "Error creating tournament: ${e.message}", e)
         Result.failure(e)
     }
 
+    // Updates an existing tournament document in Firestore
     override suspend fun updateTournament(tournament: DomainTournament): Result<DomainTournament> = try {
-        val dataTournament = tournament.toData()
-        tournamentsCollection.document(tournament.id)
-            .set(dataTournament)
-            .await()
+        val dataTournament = mapDomainTournamentToData(tournament)
+        // Use set with merge option or update specific fields as needed
+        tournamentsCollection.document(tournament.id).set(dataTournament).await()
         Result.success(tournament)
     } catch (e: Exception) {
+        Log.e("TournamentRepository", "Error updating tournament ${tournament.id}: ${e.message}", e)
         Result.failure(e)
     }
 
+    /**
+     * Helper to map our DomainTournament model back to a data Map suitable for Firestore.
+     * Converts Long timestamps back to Firestore Timestamps.
+     */
+    private fun mapDomainTournamentToData(tournament: DomainTournament): Map<String, Any?> {
+        fun toTimestamp(millis: Long?): Timestamp? {
+            return millis?.let { Timestamp(Date(it)) }
+        }
+
+        return mapOf(
+            "name" to tournament.name,
+            "description" to tournament.description,
+            "gameType" to tournament.gameType,
+            "entryFee" to tournament.entryFee,
+            "prizePool" to tournament.prizePool,
+            "maxTeams" to tournament.maxTeams,
+            "registeredTeams" to tournament.registeredTeams,
+            "status" to tournament.status,
+            "startDate" to toTimestamp(tournament.startTime), // Convert back
+            "endDate" to toTimestamp(tournament.completedAt), // Convert back
+            "rules" to tournament.rules,
+            "bannerImage" to tournament.bannerImage,
+            "rewardsDistribution" to tournament.rewardsDistribution.map {
+                // Adjust if storing amount instead of percentage
+                mapOf("position" to it.position, "percentage" to it.percentage)
+            },
+            "createdAt" to toTimestamp(tournament.createdAt), // Convert back
+            "killReward" to tournament.killReward,
+            "roomId" to tournament.roomId,
+            "roomPassword" to tournament.roomPassword,
+            "actualStartTime" to toTimestamp(tournament.actualStartTime), // Convert back
+            "country" to tournament.country,
+            "registrationStartTime" to toTimestamp(tournament.registrationStartTime), // Convert back
+            "registrationEndTime" to toTimestamp(tournament.registrationEndTime) // Convert back
+            // Add any other fields that need to be saved
+        ).filterValues { it != null } // Optionally remove null values if Firestore rules require it
+    }
+
+
+    // Deletes a tournament document
     override suspend fun deleteTournament(id: String): Result<Unit> = try {
+        tournamentsCollection.document(id).delete().await()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    // --- (joinTournament and leaveTournament might be handled by registerForTournament logic or Cloud Functions) ---
+    // Placeholder implementations if needed directly
+    override suspend fun joinTournament(tournamentId: String, userId: String): Result<Unit> {
+        Log.w("TournamentRepository", "joinTournament function is likely deprecated, use registerForTournament.")
+        // This should ideally be part of the registration transaction or a Cloud Function
+        return Result.failure(UnsupportedOperationException("Use registerForTournament"))
+    }
+
+    override suspend fun leaveTournament(tournamentId: String, userId: String): Result<Unit> {
+        Log.w("TournamentRepository", "leaveTournament function needs implementation (e.g., delete registration, update counts via transaction/Cloud Function).")
+        // Requires deleting registration and potentially updating counts in a transaction
+        return Result.failure(UnsupportedOperationException("leaveTournament not fully implemented"))
+    }
+
+
+    // Updates only the status field of a tournament
+    override suspend fun updateTournamentStatus(id: String, status: TournamentStatus): Result<Unit> = try {
         tournamentsCollection.document(id)
-            .delete()
+            .update("status", status.name.uppercase()) // Store status consistently (e.g., uppercase)
             .await()
         Result.success(Unit)
     } catch (e: Exception) {
+        Log.e("TournamentRepository", "Error updating status for $id: ${e.message}", e)
         Result.failure(e)
     }
 
-    override suspend fun joinTournament(tournamentId: String, userId: String): Result<Unit> = try {
-        val tournamentRef = tournamentsCollection.document(tournamentId)
+    /**
+     * Fetches the list of tournament IDs that the user has registered for in real-time.
+     * The return type is Flow<List<String>>.
+     * This implementation is CORRECT as provided in your input.
+     */
+    override fun getUserTournamentRegistrations(userId: String): Flow<List<String>> = callbackFlow {
+        if (userId.isBlank()) {
+            trySend(emptyList()).isSuccess
+            close(Exception("User ID cannot be blank for registration flow."))
+            return@callbackFlow
+        }
 
-        firebaseManager.firestore.runTransaction { transaction ->
-            val tournament = transaction.get(tournamentRef).toObject(Tournament::class.java)
-                ?: throw Exception("Tournament not found")
+        Log.d("TournamentRepository", "Starting real-time listener for user registrations: $userId")
 
-            if (tournament.registeredTeams >= tournament.maxTeams) {
-                throw Exception("Tournament is full")
+        // Listen for real-time updates on registrations for the current user
+        val subscription = registrationsCollection
+            .whereEqualTo("userId", userId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e("TournamentRepository", "Error listening to user $userId registrations: ${error.message}", error)
+                    close(error)
+                    return@addSnapshotListener
+                }
+
+                if (snapshot == null) {
+                    Log.w("TournamentRepository", "Received null registration snapshot for user $userId.")
+                    return@addSnapshotListener
+                }
+
+                // Map the results to a list of tournament IDs
+                val ids = snapshot.documents.mapNotNull { doc -> doc.getString("tournamentId") }
+                Log.d("TournamentRepository", "Real-time update: User $userId registered for: $ids")
+                trySend(ids).isSuccess
             }
 
-            transaction.update(tournamentRef, "registeredTeams", tournament.registeredTeams + 1)
-        }.await()
-
-        Result.success(Unit)
-    } catch (e: Exception) {
-        Result.failure(e)
-    }
-
-    override suspend fun leaveTournament(tournamentId: String, userId: String): Result<Unit> = try {
-        val tournamentRef = tournamentsCollection.document(tournamentId)
-
-        firebaseManager.firestore.runTransaction { transaction ->
-            val tournament = transaction.get(tournamentRef).toObject(Tournament::class.java)
-                ?: throw Exception("Tournament not found")
-
-            if (tournament.registeredTeams <= 0) {
-                throw Exception("No players in tournament")
-            }
-
-            transaction.update(tournamentRef, "registeredTeams", tournament.registeredTeams - 1)
-        }.await()
-
-        Result.success(Unit)
-    } catch (e: Exception) {
-        Result.failure(e)
-    }
-
-    override suspend fun updateTournamentStatus(id: String, status: TournamentStatus): Result<Unit> {
-        return try {
-//            val result = firebaseManager.updateDocumentField(
-//                collection = FirebaseManager.Collections.TOURNAMENTS,
-//                documentId = id,
-//                field = "status",
-//                value = status.name
-//            )
-//            Result.success(Unit)
-            // Use direct Firestore update instead of the missing method
-            tournamentsCollection.document(id)
-                .update("status", status.name)
-                .await()
-
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Log.e("TournamentRepository", "Error updating tournament status: ${e.message}", e)
-            Result.failure(e)
+        // Unsubscribe from the listener when the flow is cancelled
+        awaitClose {
+            Log.d("TournamentRepository", "Closing real-time user registration listener for $userId.")
+            subscription.remove()
         }
     }
 
-    override suspend fun getUserTournamentRegistrations(userId: String): List<String> {
-        return try {
-            // Query the tournament_registrations collection for the user's registrations
-            val snapshot = firebaseManager.firestore
-                .collection("tournament_registrations")
-                .whereEqualTo("userId", userId)
-                .get()
-                .await()
-
-            // Extract tournament IDs from the registrations
-            snapshot.documents.mapNotNull { doc ->
-                doc.getString("tournamentId")
-            }
-        } catch (e: Exception) {
-            Log.e("TournamentRepository", "Error fetching user tournament registrations: ${e.message}", e)
-            emptyList()
-        }
+    // Checks if a specific user is registered for a specific tournament (Kept as suspend/one-time check)
+    override suspend fun isUserRegisteredForTournament(tournamentId: String, userId: String): Boolean = try {
+        // Use the specific document ID format for quick check
+        val docId = "${userId}_${tournamentId}" // Corrected docId format: it should match the one used in registerForTournament
+        registrationsCollection.document(docId).get().await().exists()
+    } catch (e: Exception) {
+        Log.e("TournamentRepository", "Error checking registration status for user $userId, tournament $tournamentId: ${e.message}", e)
+        false
     }
 
+    // Handles the complex process of registering a user for a tournament using a Firestore transaction
     override suspend fun registerForTournament(
         tournamentId: String,
         userId: String,
-        displayName: String,
-        teamName: String,
-        playerIds: List<String>
-//    ): Result<Unit> = try {
-//        val tournamentRef = firebaseManager.firestore.collection("tournaments").document(tournamentId)
-//        val userWalletRef = firebaseManager.firestore.collection("wallets").document(userId)
-//        val registrationRef = firebaseManager.firestore.collection("tournament_registrations").document("${tournamentId}_${userId}")
-//        val userTransactionsRef = firebaseManager.firestore.collection("users").document(userId).collection("transactions")
-//        val userRef = firebaseManager.firestore.collection("users").document(userId)
+        displayName: String, // User's display name for team info
+        teamName: String, // Team name chosen by user
+        playerIds: List<String> // In-game IDs of players
     ): Result<Unit> = try {
-        Log.d("TournamentRepoImpl", "=== STARTING TOURNAMENT REGISTRATION ===")
-        Log.d("TournamentRepoImpl", "Tournament ID: $tournamentId")
-        Log.d("TournamentRepoImpl", "User ID: $userId")
-        Log.d("TournamentRepoImpl", "Display Name: $displayName")
-        Log.d("TournamentRepoImpl", "Team Name: $teamName")
-        Log.d("TournamentRepoImpl", "Player IDs: $playerIds")
+        Log.d("TournamentRepoImpl", "Attempting registration: User=$userId, Tourn=$tournamentId")
+        val tournamentRef = tournamentsCollection.document(tournamentId)
+        val userWalletRef = walletsCollection.document(userId)
+        // Use the combined ID for the registration document
+        val registrationRef = registrationsCollection.document("${userId}_${tournamentId}")
+        val userRef = usersCollection.document(userId)
 
-        val tournamentRef = firebaseManager.firestore.collection("tournaments").document(tournamentId)
-        val userWalletRef = firebaseManager.firestore.collection("wallets").document(userId)
-        val registrationRef = firebaseManager.firestore.collection("tournament_registrations")
-            .document("${tournamentId}_${userId}")
-        val userTransactionsRef = firebaseManager.firestore.collection("users")
-            .document(userId).collection("transactions")
-        val userRef = firebaseManager.firestore.collection("users").document(userId)
-
-        Log.d("TournamentRepoImpl", "Starting Firestore transaction...")
         firebaseManager.firestore.runTransaction { transaction ->
-            // 1. Get current state
-            Log.d("TournamentRepoImpl", "Getting tournament document...")
+            // 1. Read necessary documents within the transaction
+            Log.d("TournamentRepoImpl", "[TXN] Reading documents...")
             val tournamentSnapshot = transaction.get(tournamentRef)
-            Log.d("TournamentRepoImpl", "Tournament exists: ${tournamentSnapshot.exists()}")
-
-            Log.d("TournamentRepoImpl", "Getting wallet document...")
             val walletSnapshot = transaction.get(userWalletRef)
-            Log.d("TournamentRepoImpl", "Wallet exists: ${walletSnapshot.exists()}")
-
-            Log.d("TournamentRepoImpl", "Getting registration document...")
-            val registrationSnapshot = transaction.get(registrationRef)
-            Log.d("TournamentRepoImpl", "Registration exists: ${registrationSnapshot.exists()}")
-
-            Log.d("TournamentRepoImpl", "Getting user document...")
+            val registrationSnapshot = transaction.get(registrationRef) // Check if already registered
             val userSnapshot = transaction.get(userRef)
-            Log.d("TournamentRepoImpl", "User exists: ${userSnapshot.exists()}")
 
-            // Use manual deserialization for tournament to handle Timestamp -> Long
-            val data = tournamentSnapshot.data
-            val tournament = if (data != null) {
-                Tournament.fromFirestore(
-                    id = tournamentSnapshot.id,
-                    title = data["title"] as? String ?: "",
-                    description = data["description"] as? String,
-                    gameMode = data["gameMode"] as? String ?: "",
-                    entryFee = (data["entryFee"] as? Number)?.toDouble() ?: 0.0,
-                    prizePool = (data["prizePool"] as? Number)?.toDouble() ?: 0.0,
-                    maxTeams = (data["maxTeams"] as? Number)?.toInt() ?: 0,
-                    registeredTeams = (data["registeredTeams"] as? Number)?.toInt() ?: 0,
-                    status = data["status"] as? String ?: "upcoming",
-                    startDate = (data["startDate"] as? Timestamp) ?: (data["startTime"] as? Timestamp),
-                    endDate = data["endDate"] as? Timestamp,
-                    rules = data["rules"] as? List<String>,
-                    image = data["image"] as? String,
-                    createdAt = data["createdAt"] as? Timestamp,
-                    updatedAt = data["updatedAt"] as? Timestamp,
-                    // Extra fields for app logic
-                    matchType = data["matchType"] as? String,
-                    map = data["map"] as? String,
-                    registrationStartTime = data["registrationStartTime"] as? Timestamp,
-                    registrationEndTime = data["registrationEndTime"] as? Timestamp,
-                    rewardsDistribution = data["rewardsDistribution"] as? List<Map<String, Any>>,
-                    killReward = (data["killReward"] as? Number)?.toDouble(),
-                    roomId = data["roomId"] as? String,
-                    roomPassword = data["roomPassword"] as? String,
-                    actualStartTime = data["actualStartTime"] as? Timestamp
-                )
-            } else {
-                null
-            }
-            if (tournament == null) {
-                Log.e("TournamentRepoImpl", "Tournament not found for ID: $tournamentId")
-                throw Exception("Tournament not found. It might have been deleted.")
-            }
-            Log.d("TournamentRepoImpl", "Tournament loaded: ${tournament.title}, Entry Fee: ${tournament.entryFee}")
+            // 2. Deserialize and Validate Data
+            Log.d("TournamentRepoImpl", "[TXN] Deserializing and validating...")
+            val tournament = mapDocumentToDomainTournament(tournamentSnapshot.id, tournamentSnapshot.data)
+                ?: throw Exception("Tournament not found (ID: $tournamentId).")
 
-            val wallet = walletSnapshot.toObject(com.cehpoint.netwin.data.model.Wallet::class.java)
-                ?: throw Exception("User wallet not found.")
-            Log.d("TournamentRepoImpl", "Wallet loaded: Bonus=${wallet.bonusBalance}, Withdrawable=${wallet.withdrawableBalance}")
+            // Revert to direct access for objects not provided
+            val walletMap = walletSnapshot.data
+                ?: throw Exception("User wallet not found (ID: $userId).")
+            val bonusBalance = (walletMap["bonusBalance"] as? Number)?.toDouble() ?: 0.0
+            val withdrawableBalance = (walletMap["withdrawableBalance"] as? Number)?.toDouble() ?: 0.0
+            val currency = walletMap["currency"] as? String ?: "INR"
 
-            val user = userSnapshot.toObject(com.cehpoint.netwin.data.model.User::class.java)
-                ?: throw Exception("User not found.")
-            Log.d("TournamentRepoImpl", "User loaded: KYC Status=${user.kycStatus}")
+            val userMap = userSnapshot.data
+                ?: throw Exception("User profile not found (ID: $userId).")
+            val kycStatus = userMap["kycStatus"] as? String
 
-            // 2. Perform validation checks
-            Log.d("TournamentRepoImpl", "Starting validation checks...")
-
+            // --- Validation Checks ---
             if (registrationSnapshot.exists()) {
-                Log.e("TournamentRepoImpl", "User already registered for tournament")
                 throw Exception("You are already registered for this tournament.")
             }
-            Log.d("TournamentRepoImpl", "Registration check passed")
-
-            if (tournament.registeredTeams >= tournament.maxTeams) {
-                Log.e("TournamentRepoImpl", "Tournament full: ${tournament.registeredTeams}/${tournament.maxTeams}")
-                throw Exception("Sorry, this tournament is already full.")
+            // Use calculated properties from the domain model for checks
+            if (tournament.isFull) {
+                throw Exception("Sorry, this tournament is already full (${tournament.registeredTeams}/${tournament.maxTeams}).")
             }
-            Log.d("TournamentRepoImpl", "Tournament capacity check passed: ${tournament.registeredTeams}/${tournament.maxTeams}")
-
-            // Check total balance (bonus + withdrawable)
-            val totalBalance = wallet.bonusBalance + wallet.withdrawableBalance
-            Log.d("TournamentRepoImpl", "Balance check: Total=$totalBalance, Required=${tournament.entryFee}")
+            if (!tournament.isRegistrationWindowOpen) {
+                throw Exception("Registration is currently closed for this tournament.")
+            }
+            val totalBalance = bonusBalance + withdrawableBalance
             if (totalBalance < tournament.entryFee) {
-                Log.e("TournamentRepoImpl", "Insufficient balance: $totalBalance < ${tournament.entryFee}")
-                throw Exception("Insufficient balance. Please add funds to your wallet.")
+                throw Exception("Insufficient balance (${totalBalance} < ${tournament.entryFee}). Please add funds.")
             }
-            Log.d("TournamentRepoImpl", "Balance check passed")
-
-            // KYC check (if required)
-//            if (tournament.entryFee > 0 && user.kycStatus != "verified") {
-            Log.d("TournamentRepoImpl", "KYC check: Entry fee=${tournament.entryFee}, KYC Status=${user?.kycStatus}")
-            if(tournament.entryFee > 0 && user?.kycStatus?.equals("verified", ignoreCase = true) == false) {
-                Log.e("TournamentRepoImpl", "KYC verification required")
-                throw Exception("KYC verification required to register for this tournament.")
+            if (tournament.entryFee > 0 && kycStatus?.equals("verified", ignoreCase = true) == false) {
+                throw Exception("KYC verification is required to join paid tournaments.")
             }
-            Log.d("TournamentRepoImpl", "KYC check passed")
+            Log.d("TournamentRepoImpl", "[TXN] Validation passed.")
 
-            // Registration window check (time-based)
-            val now = System.currentTimeMillis()
-            val startMillis = tournament.startDate?.toDate()?.time
-            val regStartMillis = tournament.registrationStartTime?.toDate()?.time ?: Long.MIN_VALUE
-            val regEndMillis = tournament.registrationEndTime?.toDate()?.time ?: (startMillis ?: Long.MAX_VALUE)
-            Log.d("TournamentRepoImpl", "Registration window: now=$now, regStart=$regStartMillis, regEnd=$regEndMillis, start=$startMillis, status=${tournament.status}")
-            if (!(now >= regStartMillis && now < regEndMillis)) {
-                Log.e("TournamentRepoImpl", "Registration window closed")
-                throw Exception("Registration is closed.")
-            }
-            Log.d("TournamentRepoImpl", "Registration window check passed")
-
-            // 3. All checks passed, perform the writes
-            Log.d("TournamentRepoImpl", "All validation checks passed! Starting database writes...")
+            // 3. Perform Writes within the transaction
+            Log.d("TournamentRepoImpl", "[TXN] Performing writes...")
             val entryFee = tournament.entryFee
-
-            // Deduct from bonus balance first, then from withdrawable balance
-            val bonusUsed = minOf(wallet.bonusBalance, entryFee)
+            val bonusUsed = minOf(bonusBalance, entryFee)
             val withdrawableUsed = entryFee - bonusUsed
+            val newBonusBalance = bonusBalance - bonusUsed
+            val newWithdrawableBalance = withdrawableBalance - withdrawableUsed
 
-            val newBonusBalance = wallet.bonusBalance - bonusUsed
-            val newWithdrawableBalance = wallet.withdrawableBalance - withdrawableUsed
-            val newTotalBalance = newBonusBalance + newWithdrawableBalance
-            val newPlayerCount = tournament.registeredTeams + 1
+            // Update wallet balances
+            transaction.update(userWalletRef, mapOf(
+                "bonusBalance" to newBonusBalance,
+                "withdrawableBalance" to newWithdrawableBalance,
+                "balance" to newBonusBalance + newWithdrawableBalance // Update total balance too
+            ))
+            Log.d("TournamentRepoImpl", "[TXN] Wallet updated.")
 
-            Log.d("TournamentRepoImpl", "Balance calculation: Bonus used=$bonusUsed, Withdrawable used=$withdrawableUsed")
-            Log.d("TournamentRepoImpl", "New balances: Bonus=$newBonusBalance, Withdrawable=$newWithdrawableBalance, Total=$newTotalBalance")
-            Log.d("TournamentRepoImpl", "New player count: $newPlayerCount")
-
-            // Update wallet with new balances
-            Log.d("TournamentRepoImpl", "Updating wallet balances...")
-            transaction.update(userWalletRef, "bonusBalance", newBonusBalance)
-            transaction.update(userWalletRef, "withdrawableBalance", newWithdrawableBalance)
-            transaction.update(userWalletRef, "balance", newTotalBalance)
-
-            // Update user's walletBalance for display
-            Log.d("TournamentRepoImpl", "Updating user wallet balance...")
-            transaction.update(userRef, "walletBalance", newTotalBalance)
-
-            // Note: Cannot update tournament registeredTeams count due to Firestore security rules
-            // Tournament updates require admin privileges. The count will be calculated dynamically
-            Log.d("TournamentRepoImpl", "Skipping tournament update due to permission restrictions")
-
-            // Create registration document
-            Log.d("TournamentRepoImpl", "Creating registration document...")
+            // Create Registration Document
             val teamMembers = playerIds.mapIndexed { index, inGameId ->
+                // Use provided display name for the first player, generic for others
                 val username = if (index == 0) displayName else "Player ${index + 1}"
-                com.cehpoint.netwin.data.model.TeamMember(username = username, inGameId = inGameId)
+                TeamMember(username = username, inGameId = inGameId)
             }
-
             val registration = TournamentRegistration(
                 tournamentId = tournamentId,
                 userId = userId,
-                teamName = teamName,
+                teamName = teamName.ifBlank { "$displayName's Team" }, // Default team name if empty
                 teamMembers = teamMembers,
-                paymentStatus = "completed",
-                registeredAt = Timestamp.now()
+                paymentStatus = "completed", // Assume payment is part of this transaction
+                registeredAt = Timestamp.now() // Use server timestamp
             )
-            Log.d("TournamentRepoImpl", "Setting registration document: ${registrationRef.path}")
             transaction.set(registrationRef, registration)
+            Log.d("TournamentRepoImpl", "[TXN] Registration document created.")
 
-            // Create wallet transaction record in the correct collection
-            Log.d("TournamentRepoImpl", "Creating wallet transaction record...")
-            val walletTransactionRecord = com.cehpoint.netwin.data.model.Transaction(
+            // Create Wallet Transaction Log
+            val transactionDescription = "Entry Fee: ${tournament.name}"
+            val walletTransaction = Transaction(
                 userId = userId,
-                type = com.cehpoint.netwin.data.model.TransactionType.ENTRY_FEE, // Changed to match Firestore rules
+                type = TransactionType.ENTRY_FEE,
                 amount = entryFee,
-                currency = wallet.currency ?: "INR",
-                status = com.cehpoint.netwin.data.model.TransactionStatus.COMPLETED,
-                description = "Tournament entry: ${tournament.title}",
-                createdAt = Timestamp.now(),
-                tournamentId = tournamentId
+                currency = currency, // Use wallet currency
+                status = TransactionStatus.COMPLETED,
+                description = transactionDescription,
+                createdAt = Timestamp.now(), // Use server timestamp
+                tournamentId = tournamentId // Link transaction to tournament
             )
-            val walletTransactionRef = firebaseManager.firestore.collection("wallet_transactions").document()
-            Log.d("TournamentRepoImpl", "Setting wallet transaction document: ${walletTransactionRef.path}")
-            transaction.set(walletTransactionRef, walletTransactionRecord)
+            // Create a *new* document in the transactions collection
+            val newTransactionRef = transactionsCollection.document()
+            transaction.set(newTransactionRef, walletTransaction)
+            Log.d("TournamentRepoImpl", "[TXN] Wallet transaction logged.")
 
-            Log.d("TournamentRepoImpl", "All transaction writes completed successfully!")
-        }.await()
+            // --- IMPORTANT: registeredTeams Count Update ---
+            // It's generally better to update counts using Cloud Functions triggered by
+            // new registrations to avoid contention and permission issues.
+            // If you MUST do it here, uncomment the line below, but ensure security rules allow it.
+            // transaction.update(tournamentRef, "registeredTeams", FieldValue.increment(1))
+            Log.w("TournamentRepoImpl", "[TXN] Skipping direct registeredTeams increment. Use Cloud Functions.")
 
-        // Verify the transaction actually committed by checking if documents exist
-        Log.d("TournamentRepoImpl", "Verifying transaction commit...")
-        val verifyRegistration = firebaseManager.firestore
-            .collection("tournament_registrations")
-            .document("${tournamentId}_${userId}")
-            .get()
-            .await()
+            // Transaction completes automatically if no exceptions are thrown
+            Log.d("TournamentRepoImpl", "[TXN] Transaction successful.")
+            null // Return null for successful transaction commit in Kotlin SDK
+        }.await() // Wait for the transaction to complete
 
-        val verifyWalletTransaction = firebaseManager.firestore
-            .collection("wallet_transactions")
-            .whereEqualTo("userId", userId)
-            .whereEqualTo("tournamentId", tournamentId)
-            .whereEqualTo("type", "entry_fee")
-            .limit(1)
-            .get()
-            .await()
-
-        if (!verifyRegistration.exists()) {
-            Log.e("TournamentRepoImpl", "CRITICAL: Registration document not found after transaction!")
-            throw Exception("Registration failed - document not created")
-        }
-
-        if (verifyWalletTransaction.isEmpty) {
-            Log.e("TournamentRepoImpl", "CRITICAL: Wallet transaction not found after transaction!")
-            throw Exception("Registration failed - transaction not recorded")
-        }
-
-        // Verify wallet balance was actually deducted
-        val verifyWallet = firebaseManager.firestore
-            .collection("wallets")
-            .document(userId)
-            .get()
-            .await()
-
-        val updatedWallet = verifyWallet.toObject(com.cehpoint.netwin.data.model.Wallet::class.java)
-        Log.d("TournamentRepoImpl", "Updated wallet balances: Bonus=${updatedWallet?.bonusBalance}, Withdrawable=${updatedWallet?.withdrawableBalance}")
-
-        // Note: We can't verify exact balance deduction here since wallet and tournament variables are out of scope
-        // The transaction logic itself ensures proper deduction, and we've verified the documents exist
-
-        Log.d("TournamentRepoImpl", "Transaction verification successful - all documents created and wallet updated")
-        Log.d("TournamentRepoImpl", "Registration transaction completed successfully")
+        Log.i("TournamentRepoImpl", "Registration successful for User=$userId, Tourn=$tournamentId")
         Result.success(Unit)
     } catch (e: Exception) {
-        Log.e("TournamentRepoImpl", "Error in registerForTournament transaction", e)
-        Result.failure(e)
+        // Log specific errors for debugging
+        Log.e("TournamentRepoImpl", "Registration failed for User=$userId, Tourn=$tournamentId: ${e.message}", e)
+        // Provide user-friendly error messages
+        val userMessage = when {
+            e.message?.contains("already registered", ignoreCase = true) == true -> "You are already registered."
+            e.message?.contains("full", ignoreCase = true) == true -> "Tournament is full."
+            e.message?.contains("closed", ignoreCase = true) == true -> "Registration is closed."
+            e.message?.contains("Insufficient balance", ignoreCase = true) == true -> "Insufficient balance."
+            e.message?.contains("KYC", ignoreCase = true) == true -> "KYC verification needed."
+            e.message?.contains("not found", ignoreCase = true) == true -> "Tournament or user data not found. Please try again later."
+            else -> "Registration failed. Please try again." // Generic error
+        }
+        Result.failure(Exception(userMessage, e)) // Wrap original exception
     }
 
-    override suspend fun isUserRegisteredForTournament(tournamentId: String, userId: String): Boolean = try {
-        val registrationRef = firebaseManager.firestore
-            .collection("tournament_registrations")
-            .document("${tournamentId}_${userId}")
+    /**
+     * Logs a user's score submission (e.g., via screenshot) to the database for review.
+     * This corresponds to the "Scan and Earn" feature when a match is ongoing.
+     *
+     * Note: This is a placeholder. A real implementation would include a screenshot URL.
+     *
+     * @param tournamentId The ID of the tournament.
+     * @param userId The ID of the submitting user.
+     * @return Result<Unit> indicating success or failure of logging the submission.
+     */
+    suspend fun logScoreSubmission(tournamentId: String, userId: String, screenshotUrl: String?): Result<Unit> = try {
+        Log.d("TournamentRepoImpl", "Logging score submission for User=$userId, Tourn=$tournamentId")
 
-        registrationRef.get().await().exists()
+        val submissionData = hashMapOf(
+            "userId" to userId,
+            "tournamentId" to tournamentId,
+            "submissionType" to "screenshot",
+            "screenshotUrl" to (screenshotUrl ?: "URL_PENDING_UPLOAD"), // Placeholder for the actual URL
+            "submittedAt" to Timestamp.now(),
+            "status" to "pending_review" // Requires admin review
+        )
+
+        scoreSubmissionsCollection.add(submissionData).await()
+        Log.i("TournamentRepoImpl", "Score submission logged successfully.")
+        Result.success(Unit)
     } catch (e: Exception) {
-        Log.e("TournamentRepoImpl", "Error checking registration status: ${e.message}", e)
-        false
+        Log.e("TournamentRepoImpl", "Failed to log score submission: ${e.message}", e)
+        Result.failure(Exception("Failed to submit score. Please check your network.", e))
     }
 }

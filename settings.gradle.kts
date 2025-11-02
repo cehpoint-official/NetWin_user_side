@@ -1,17 +1,21 @@
 pluginManagement {
     repositories {
+        gradlePluginPortal()
         google {
             content {
+                // FIX: Added the group ID for ML Kit dependencies.
+                // This allows the com.google.mlkit group (GenAI APIs) to be downloaded.
                 includeGroupByRegex("com\\.android.*")
                 includeGroupByRegex("com\\.google.*")
                 includeGroupByRegex("androidx.*")
+                includeGroup("com.google.mlkit") // <--- ⭐️ ADD THIS LINE
             }
         }
         mavenCentral()
-        gradlePluginPortal()
     }
 }
 dependencyResolutionManagement {
+    // This section is correctly configured to use Google/Maven repos.
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()

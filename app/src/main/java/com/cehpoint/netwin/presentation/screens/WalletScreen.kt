@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Environment // KEEP THIS IMPORT FOR FILE CREATION IN KYCSCREEN
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -107,7 +108,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import coil.compose.rememberAsyncImagePainter
-import com.cehpoint.netwin.R // <-- Make sure to import your project's R file
+import com.cehpoint.netwin.R
 import com.cehpoint.netwin.data.model.PendingDeposit
 import com.cehpoint.netwin.payments.PaymentGatewayFactory
 import com.cehpoint.netwin.payments.PaymentGatewayManager
@@ -158,7 +159,7 @@ fun WalletScreen(
     val currentUser by authViewModel.currentUser.collectAsState()
     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
     val withdrawableBalance by walletViewModel.withdrawableBalance.collectAsState(initial = 0.0)
-    val bonusBalance by walletViewModel.bonusBalance.collectAsState(initial = 0.0) // This remains for viewmodel logic
+    val bonusBalance by walletViewModel.bonusBalance.collectAsState(initial = 0.0)
     val withdrawalRequests by walletViewModel.withdrawalRequests.collectAsState(initial = emptyList())
 
     var showAmountSheet by remember { mutableStateOf(false) }
@@ -191,6 +192,9 @@ fun WalletScreen(
 
     var kycStatus by rememberSaveable { mutableStateOf<String?>(null) }
 
+    // State to hold the fetched user name
+    var currentUserName by rememberSaveable { mutableStateOf<String>("Unknown User") }
+
     val uriHandler = LocalUriHandler.current
     val context = LocalContext.current
 
@@ -210,11 +214,21 @@ fun WalletScreen(
                     country.equals("India", ignoreCase = true) || country.equals("IN", ignoreCase = true) -> "INR"
                     else -> "INR" // Default to INR
                 }
-                kycStatus = userDoc.getString("kycStatus") ?: "pending" // Default to "pending" if null
+                kycStatus = userDoc.getString("kycStatus") ?: "pending"
+
+                // FIX IMPLEMENTATION (Step 1)
+                currentUserName = userDoc.getString("name")
+                    ?: userDoc.getString("username")
+                            ?: user.displayName
+                            ?: user.email?.substringBefore("@")
+                            ?: "Unknown User"
+                // END FIX
+
             } catch (e: Exception) {
                 userCountry = "India"
                 userCurrency = "INR"
                 kycStatus = "pending"
+                currentUserName = "Unknown User"
             }
         }
     }
@@ -291,19 +305,19 @@ fun WalletScreen(
             if (kycStatusLower != "approved") {
                 val (bannerText, buttonText, bannerColor, tintColor) = when (kycStatusLower) {
                     "pending" -> KycBannerInfo(
-                        bannerText = "Your KYC application is pending review.",
+                        bannerText = "Your KYC application is pending review. Withdrawal is restricted.",
                         buttonText = null, // No button, just info
                         bannerColor = Color(0xFFFFF8E1), // WarningYellow light
                         tintColor = Color(0xFFF57C00)  // WarningYellow dark
                     )
                     "rejected" -> KycBannerInfo(
-                        bannerText = "Your KYC was rejected. Please resubmit.",
+                        bannerText = "Your KYC was rejected. Please resubmit for withdrawal access.",
                         buttonText = "Resubmit",
                         bannerColor = Color(0xFFFDE0E0), // ErrorRed light
                         tintColor = Color(0xFFD32F2F)  // ErrorRed dark
                     )
                     else -> KycBannerInfo( // This covers null or any other status
-                        bannerText = "Complete KYC to add or withdraw funds.",
+                        bannerText = "Complete KYC to enable withdrawals.",
                         buttonText = "Start KYC",
                         bannerColor = Color(0xFFFFF8E1), // WarningYellow light
                         tintColor = Color(0xFFF57C00)  // WarningYellow dark
@@ -421,8 +435,6 @@ fun WalletScreen(
                 ) {
                     // Balance Card
                     item {
-                        // --- MODIFICATION ---
-                        // Removed bonusBalance from the call
                         EnhancedBalanceCard(
                             totalBalance = walletBalance,
                             withdrawableBalance = withdrawableBalance,
@@ -430,11 +442,12 @@ fun WalletScreen(
                             onWithdrawClick = { showWithdrawDialog = true },
                             enabled = (kycStatus?.lowercase() == "approved")
                         )
-                        // --- END MODIFICATION ---
                     }
 
                     // Quick Actions
                     item {
+                        // --- KYC LOGIC FIX ---
+                        val isKycApproved = (kycStatus?.lowercase() == "approved")
                         EnhancedQuickActions(
                             onDepositClick = {
                                 if (userCountry.equals("Nigeria", ignoreCase = true) || userCountry.equals("NG", ignoreCase = true)) {
@@ -444,9 +457,12 @@ fun WalletScreen(
                                 }
                             },
                             onWithdrawClick = { showWithdrawDialog = true },
-                            userCountry = userCountry,
-                            enabled = (kycStatus?.lowercase() == "approved")
+                            // Deposit is ALWAYS enabled
+                            isDepositEnabled = true,
+                            // Withdrawal requires KYC approval
+                            isWithdrawEnabled = isKycApproved,
                         )
+                        // --- END KYC LOGIC FIX ---
                     }
 
                     // Pending Deposits
@@ -622,10 +638,12 @@ fun WalletScreen(
         )
     }
 
-    // 3. NEW: Payment Proof Submission Dialog
+    // 3. Payment Proof Submission Dialog
     if (showProofDialog) {
         val scope = rememberCoroutineScope()
         val userId = currentUser?.uid
+        val userEmail = currentUser?.email ?: ""
+        val userNameToUse = currentUserName
 
         PaymentProofDialog(
             amount = amountToPay,
@@ -646,7 +664,7 @@ fun WalletScreen(
                         val uploadTask = imageRef.putFile(uri).await()
                         val downloadUrl = uploadTask.storage.downloadUrl.await().toString()
 
-                        // 2. Create PendingDeposit map
+                        // 2. Create PendingDeposit map (UPDATED WITH userEmail and userName)
                         val pendingDepositData = mapOf(
                             "userId" to userId,
                             "amount" to amountToPay.toDouble(),
@@ -655,7 +673,9 @@ fun WalletScreen(
                             "screenshotUrl" to downloadUrl,
                             "status" to "PENDING", // Status for admin approval
                             "createdAt" to Timestamp.now(),
-                            "userUpiId" to "" // Add other fields as needed
+                            "userUpiId" to "", // Add other fields as needed
+                            "userEmail" to userEmail,
+                            "userName" to userNameToUse // <-- NOW USES THE FETCHED NAME
                         )
 
                         // 3. Save to Firestore "pending_deposits" collection
@@ -759,6 +779,8 @@ fun WalletScreen(
     }
 }
 
+// --- Other Composable Functions (Unchanged or minor style changes) ---
+
 /**
  * Dialog to show static QR Code and UPI ID for payment.
  */
@@ -801,8 +823,6 @@ fun QrCodePaymentDialog(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // --- QR Code Image ---
-                // IMPORTANT: Add your QR code image to 'res/drawable'
-                // and name it 'upi_qr_code.jpg' or update the ID below.
                 Box(
                     modifier = Modifier
                         .size(250.dp)
@@ -1045,8 +1065,6 @@ fun PaymentProofDialog(
     )
 }
 
-
-// --- Other Composable Functions (Unchanged) ---
 
 @Composable
 private fun PendingDepositItem(deposit: PendingDeposit, currency: String) {
@@ -1676,7 +1694,6 @@ private fun ImprovedWalletTopBar(totalBalance: Double, currency: String) {
         Modifier
             .fillMaxWidth()
             .background(DarkBackground)
-            // .statusBarPadding()
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -1714,16 +1731,13 @@ private fun ImprovedWalletTopBar(totalBalance: Double, currency: String) {
     }
 }
 
-// --- MODIFICATION ---
-// Updated this function to show "Total Balance" and "Withdrawable"
-// Removed the `bonusBalance` parameter
 @Composable
 private fun EnhancedBalanceCard(
     totalBalance: Double,
     withdrawableBalance: Double,
     currency: String,
     onWithdrawClick: () -> Unit,
-    enabled: Boolean // This will be controlled by kycStatus
+    enabled: Boolean
 ) {
     Card(
         modifier = Modifier
@@ -1743,7 +1757,7 @@ private fun EnhancedBalanceCard(
             ) {
                 // Total Balance
                 EsportsBalanceTab(
-                    label = "Available Balance", // This was changed in the previous step
+                    label = "Available Balance",
                     amount = NGNTransactionUtils.formatAmountTidy(totalBalance, currency),
                     color = NetWinCyan,
                     isSelected = true,
@@ -1754,7 +1768,7 @@ private fun EnhancedBalanceCard(
                 EsportsBalanceTab(
                     label = "Withdrawable",
                     amount = NGNTransactionUtils.formatAmountTidy(withdrawableBalance, currency),
-                    color = NetWinPurple, // Changed from WarningYellow
+                    color = NetWinPurple,
                     isSelected = false,
                     modifier = Modifier.weight(1f)
                 )
@@ -1762,17 +1776,18 @@ private fun EnhancedBalanceCard(
         }
     }
 }
-// --- END MODIFICATION ---
 
+// --- MODIFIED COMPOSABLE ---
 @Composable
 private fun EnhancedQuickActions(
     onDepositClick: () -> Unit,
     onWithdrawClick: () -> Unit,
-    userCountry: String,
-    enabled: Boolean // This will be controlled by kycStatus
+    isDepositEnabled: Boolean,
+    isWithdrawEnabled: Boolean, // Now controls only withdrawal
+    modifier: Modifier = Modifier
 ) {
     Column(
-        modifier = Modifier.padding(horizontal = 16.dp)
+        modifier = modifier.padding(horizontal = 16.dp)
     ) {
         Text(
             text = "Quick Actions",
@@ -1786,28 +1801,29 @@ private fun EnhancedQuickActions(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Add Cash
+            // Add Cash - Enabled by isDepositEnabled (which is set to true)
             EsportsActionButton(
                 icon = Icons.Default.Add,
                 label = "Add Cash",
                 onClick = onDepositClick,
-                enabled = enabled,
+                enabled = isDepositEnabled,
                 backgroundColor = SuccessGreen,
                 modifier = Modifier.weight(1f)
             )
 
-            // Withdraw
+            // Withdraw - Controlled by isWithdrawEnabled (KYC status)
             EsportsActionButton(
                 icon = Icons.Default.GetApp,
                 label = "Withdraw",
                 onClick = onWithdrawClick,
-                enabled = enabled,
+                enabled = isWithdrawEnabled,
                 backgroundColor = ErrorRed,
                 modifier = Modifier.weight(1f)
             )
         }
     }
 }
+// --- END MODIFIED COMPOSABLE ---
 
 @Composable
 private fun EnhancedTransactionItem(transaction: Transaction, currency: String) {

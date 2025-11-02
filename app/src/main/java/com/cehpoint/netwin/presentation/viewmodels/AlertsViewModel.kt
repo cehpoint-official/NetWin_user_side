@@ -115,4 +115,4 @@ class AlertsViewModel @Inject constructor() : ViewModel() {
 
 data class AlertsState(
     val alerts: List<Alert> = emptyList()
-) 
+)

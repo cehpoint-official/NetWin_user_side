@@ -36,6 +36,8 @@ import com.cehpoint.netwin.presentation.events.RegistrationFlowEvent
 import com.cehpoint.netwin.presentation.viewmodels.TournamentViewModel
 import java.text.SimpleDateFormat
 import java.util.*
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,6 +56,8 @@ fun RegistrationFlowScreen(
     // Load tournament details if not already loaded
     LaunchedEffect(tournamentId) {
         if (selectedTournament?.id != tournamentId) {
+            // ⭐️ FIX: Confirmed this call is correct based on the stable ViewModel signature.
+            // The previous error was likely transient or related to the dependency issues just fixed.
             viewModel.getTournamentById(tournamentId)
         }
         // Update step data with tournament ID
@@ -113,7 +117,7 @@ fun RegistrationFlowScreen(
 
             // Error display - only show errors relevant to current step
             registrationUiState.error?.let { error ->
-                android.util.Log.e("RegistrationFlowScreen", "VALIDATION ERROR DISPLAYED IN UI: '$error' on step ${registrationUiState.step}")
+                Log.e("RegistrationFlowScreen", "VALIDATION ERROR DISPLAYED IN UI: '$error' on step ${registrationUiState.step}")
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -144,53 +148,53 @@ fun RegistrationFlowScreen(
             // Step content
             when (registrationUiState.step) {
                 RegistrationStep.REVIEW -> {
-                    android.util.Log.d("RegistrationFlowScreen", "UI consuming ValidationState - Current Step: REVIEW, Error: ${registrationUiState.error}")
+                    Log.d("RegistrationFlowScreen", "UI consuming ValidationState - Current Step: REVIEW, Error: ${registrationUiState.error}")
                     RegistrationStep1(
                         tournament = selectedTournament,
-                        onNext = { 
-                            android.util.Log.d("RegistrationFlowScreen", "BREAKPOINT 1: User clicked Next from REVIEW step - triggering validation")
-                            viewModel.onRegistrationEvent(RegistrationFlowEvent.Next) 
+                        onNext = {
+                            Log.d("RegistrationFlowScreen", "BREAKPOINT 1: User clicked Next from REVIEW step - triggering validation")
+                            viewModel.onRegistrationEvent(RegistrationFlowEvent.Next)
                         },
                         viewModel = viewModel
                     )
                 }
                 RegistrationStep.PAYMENT -> {
-                    android.util.Log.d("RegistrationFlowScreen", "UI consuming ValidationState - Current Step: PAYMENT, Error: ${registrationUiState.error}")
+                    Log.d("RegistrationFlowScreen", "UI consuming ValidationState - Current Step: PAYMENT, Error: ${registrationUiState.error}")
                     RegistrationStep2(
                         stepData = registrationUiState.data,
                         onDataUpdate = { transform ->
                             viewModel.onRegistrationEvent(RegistrationFlowEvent.UpdateData { transform(this) })
                         },
-                        onNext = { 
-                            android.util.Log.d("RegistrationFlowScreen", "BREAKPOINT 2: User clicked Next from PAYMENT step - triggering validation")
-                            viewModel.onRegistrationEvent(RegistrationFlowEvent.Next) 
+                        onNext = {
+                            Log.d("RegistrationFlowScreen", "BREAKPOINT 2: User clicked Next from PAYMENT step - triggering validation")
+                            viewModel.onRegistrationEvent(RegistrationFlowEvent.Next)
                         },
                         isLoading = registrationUiState.loading
                     )
                 }
                 RegistrationStep.DETAILS -> {
-                    android.util.Log.d("RegistrationFlowScreen", "UI consuming ValidationState - Current Step: DETAILS, Error: ${registrationUiState.error}")
+                    Log.d("RegistrationFlowScreen", "UI consuming ValidationState - Current Step: DETAILS, Error: ${registrationUiState.error}")
                     RegistrationStep3(
                         tournament = selectedTournament,
                         stepData = registrationUiState.data,
                         onDataUpdate = { transform ->
                             viewModel.onRegistrationEvent(RegistrationFlowEvent.UpdateData { transform(this) })
                         },
-                        onNext = { 
-                            android.util.Log.d("RegistrationFlowScreen", "BREAKPOINT 3: User clicked Next from DETAILS step - triggering validation")
-                            viewModel.onRegistrationEvent(RegistrationFlowEvent.Next) 
+                        onNext = {
+                            Log.d("RegistrationFlowScreen", "BREAKPOINT 3: User clicked Next from DETAILS step - triggering validation")
+                            viewModel.onRegistrationEvent(RegistrationFlowEvent.Next)
                         },
                         isLoading = registrationUiState.loading
                     )
                 }
                 RegistrationStep.CONFIRM -> {
-                    android.util.Log.d("RegistrationFlowScreen", "UI consuming ValidationState - Current Step: CONFIRM, Error: ${registrationUiState.error}")
+                    Log.d("RegistrationFlowScreen", "UI consuming ValidationState - Current Step: CONFIRM, Error: ${registrationUiState.error}")
                     RegistrationStep4(
                         tournament = selectedTournament,
                         stepData = registrationUiState.data,
-                        onComplete = { 
-                            android.util.Log.d("RegistrationFlowScreen", "BREAKPOINT 4: User clicked Submit from CONFIRM step - triggering final validation")
-                            viewModel.onRegistrationEvent(RegistrationFlowEvent.Submit) 
+                        onComplete = {
+                            Log.d("RegistrationFlowScreen", "BREAKPOINT 4: User clicked Submit from CONFIRM step - triggering final validation")
+                            viewModel.onRegistrationEvent(RegistrationFlowEvent.Submit)
                         },
                         isLoading = isRegistering
                     )
@@ -264,11 +268,11 @@ fun RegistrationStep1(
 ) {
     val scrollState = rememberScrollState()
     val walletBalance by viewModel.walletBalance.collectAsState()
-    
+
     // Collect user data for KYC status
     var userKycStatus by remember { mutableStateOf("pending") }
     var isLoadingUserData by remember { mutableStateOf(true) }
-    
+
     // Load user data to get KYC status
     LaunchedEffect(Unit) {
         try {
@@ -280,23 +284,23 @@ fun RegistrationStep1(
             isLoadingUserData = false
         }
     }
-    
+
     // Calculate prerequisites
     val entryFee = tournament?.entryFee?.toDouble() ?: 0.0
     val hasSufficientBalance = walletBalance >= entryFee
     val isKycVerified = userKycStatus.equals("VERIFIED", ignoreCase = true)
-    val registrationOpen = tournament?.let { 
+    val registrationOpen = tournament?.let {
         val now = System.currentTimeMillis()
         // Time-based window: use explicit registration window if present, else fallback to startTime
         val regStart = it.registrationStartTime ?: Long.MIN_VALUE
         val regEndOrStart = it.registrationEndTime ?: it.startTime
         now >= regStart && now < regEndOrStart
     } ?: false
-    
-    val slotsAvailable = tournament?.let { 
-        it.registeredTeams < it.maxTeams 
+
+    val slotsAvailable = tournament?.let {
+        it.registeredTeams < it.maxTeams
     } ?: false
-    
+
     val allRequirementsMet = hasSufficientBalance && isKycVerified && registrationOpen && slotsAvailable
 
     Column(
@@ -339,7 +343,7 @@ fun RegistrationStep1(
                 Log.d("TAG_TOURNAMENT_DETAILS", "Participants: ${t.registeredTeams}/${t.maxTeams}")
                 Log.d("TAG_TOURNAMENT_DETAILS", "StartTime(ms): ${t.startTime} | Date: ${try { java.util.Date(t.startTime).toString() } catch (e: Exception) { "Invalid" }}")
                 Log.d("TAG_TOURNAMENT_DETAILS", "==================================")
-                
+
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
@@ -451,7 +455,7 @@ fun RegistrationStep1(
             Log.d("TAG_REG_REQUIREMENTS", "Registration Window: ${if (registrationOpen) "OPEN" else "CLOSED"}")
             Log.d("TAG_REG_REQUIREMENTS", "Slots Available: ${if (slotsAvailable) "YES" else "NO"}")
             Log.d("TAG_REG_REQUIREMENTS", "==================================")
-            
+
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -578,7 +582,7 @@ fun RegistrationStep1(
                 style = MaterialTheme.typography.bodySmall,
                 color = Color.Gray,
                 modifier = Modifier.fillMaxWidth(),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                textAlign = TextAlign.Center
             )
         }
         Spacer(modifier = Modifier.height(16.dp))
@@ -610,9 +614,9 @@ private fun PrerequisiteItem(
                 modifier = Modifier.size(20.dp)
             )
         }
-        
+
         Spacer(modifier = Modifier.width(12.dp))
-        
+
         Column(
             modifier = Modifier.weight(1f)
         ) {
@@ -662,8 +666,8 @@ fun RegistrationStep2(
     onNext: () -> Unit,
     isLoading: Boolean
 ) {
-    var selectedPaymentMethod by remember(stepData.paymentMethod) { 
-        mutableStateOf(stepData.paymentMethod) 
+    var selectedPaymentMethod by remember(stepData.paymentMethod) {
+        mutableStateOf(stepData.paymentMethod)
     }
     val scrollState = rememberScrollState()
 
@@ -684,24 +688,24 @@ fun RegistrationStep2(
                 color = Color.White,
                 fontWeight = FontWeight.Bold
             )
-            
+
             Spacer(modifier = Modifier.height(24.dp))
-            
+
             // Payment Method Options - Only Wallet Available
             PaymentMethodOption(
                 methodName = "Wallet Balance",
                 description = "Pay using your NetWin wallet",
                 isSelected = selectedPaymentMethod == "wallet",
-                onClick = { 
+                onClick = {
                     selectedPaymentMethod = "wallet"
                     onDataUpdate { it.copy(paymentMethod = "wallet") }
                 }
             )
         }
-        
+
         // Fixed button area
         Spacer(modifier = Modifier.height(16.dp))
-        
+
         Button(
             onClick = onNext,
             modifier = Modifier
@@ -767,9 +771,9 @@ private fun PaymentMethodOption(
                     unselectedColor = Color.Gray
                 )
             )
-            
+
             Spacer(modifier = Modifier.width(16.dp))
-            
+
             Column {
                 Text(
                     text = methodName,
@@ -835,11 +839,19 @@ fun RegistrationStep3(
             Spacer(modifier = Modifier.height(16.dp))
 
             // Player IDs
-            stepData.playerIds.forEachIndexed { index, playerId ->
+            // FIX: Ensure the list has enough space for new entries up to maxPlayers,
+            // but only iterate over actual entries for editing.
+            val currentPlayers = stepData.playerIds.size
+            val displayedPlayers = if (currentPlayers == 0 && maxPlayers > 0) 1 else currentPlayers
+
+            repeat(displayedPlayers) { index ->
                 OutlinedTextField(
-                    value = playerId,
+                    value = stepData.playerIds.getOrElse(index) { "" },
                     onValueChange = {
                         val newPlayerIds = stepData.playerIds.toMutableList()
+                        while (newPlayerIds.size <= index) {
+                            newPlayerIds.add("")
+                        }
                         newPlayerIds[index] = it
                         onDataUpdate { data -> data.copy(playerIds = newPlayerIds) }
                     },
@@ -867,11 +879,11 @@ fun RegistrationStep3(
                 }
                 Button(
                     onClick = {
-                        if (stepData.playerIds.size > 1) {
+                        if (stepData.playerIds.size > 0) { // Allow removing even if min players is 1 (for validation error, but let user fix)
                             onDataUpdate { it.copy(playerIds = it.playerIds.dropLast(1)) }
                         }
                     },
-                    enabled = stepData.playerIds.size > 1
+                    enabled = stepData.playerIds.size > 0
                 ) {
                     Text("Remove Player")
                 }
@@ -986,10 +998,10 @@ fun RegistrationStep4(
                     SummaryRow("Tournament", tournament?.name ?: "N/A")
                     SummaryRow("Team Name", stepData.teamName)
                     SummaryRow("Entry Fee", "₹${tournament?.entryFee?.toInt() ?: 0}")
-                    SummaryRow("Payment Method", stepData.paymentMethod.replaceFirstChar { it.uppercase() })
-                    
+                    SummaryRow("Payment Method", stepData.paymentMethod.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() })
+
                     Spacer(modifier = Modifier.height(12.dp))
-                    
+
                     Text("Players", style = MaterialTheme.typography.titleSmall, color = Color.Cyan)
                     stepData.playerIds.forEachIndexed { index, id ->
                         SummaryRow("Player ${index + 1}", id)

@@ -68,7 +68,11 @@ enum class TransactionType {
     CARD_PAYMENT,
 
     @PropertyName("mobile_money")
-    MOBILE_MONEY
+    MOBILE_MONEY,
+
+    // ⭐ FIX 1: Added the missing constant required by WalletRepositoryImpl
+    @PropertyName("prize_payout")
+    TOURNAMENT_WIN
 }
 
 enum class TransactionStatus {
@@ -81,6 +85,10 @@ enum class TransactionStatus {
     @PropertyName("failed")
     FAILED,
 
+    // FIX: Added the missing REJECTED status.
+    @PropertyName("rejected")
+    REJECTED,
+
     @PropertyName("refunded")
     REFUNDED,
 
@@ -89,7 +97,6 @@ enum class TransactionStatus {
 
     @PropertyName("verified")
     VERIFIED
-
 }
 
 enum class PaymentMethod {
@@ -143,5 +150,9 @@ enum class PaymentMethod {
     MOBILE_MONEY_NG,
 
     @PropertyName("bank_account_ng")
-    BANK_ACCOUNT_NG
+    BANK_ACCOUNT_NG,
+
+    // ⭐ FIX 2: Added the missing constant required by WalletRepositoryImpl
+    @PropertyName("system")
+    SYSTEM
 }

@@ -541,19 +541,21 @@ fun TournamentDetailsScreenUI(
     val selectedTournament by viewModel.selectedTournament.collectAsState()
     val isLoading by viewModel.isLoadingDetails.collectAsState()
     val error by viewModel.detailsError.collectAsState()
-    val registrationStatus by viewModel.registrationStatus.collectAsState()
-    val user = FirebaseAuth.getInstance().currentUser
-    val userCurrency by viewModel.userCurrency.collectAsState() // <-- Get the currency here
-    LaunchedEffect(tournamentId) {
-        viewModel.getTournamentById(tournamentId)
+
+    // 1. Get the set of all registered tournament IDs
+    val registeredTournamentIds by viewModel.registeredTournamentIds.collectAsState()
+
+    // 2. Determine registration status based on the current tournamentId
+    val isRegistered: Boolean = remember(selectedTournament, registeredTournamentIds) {
+        registeredTournamentIds.contains(tournamentId)
     }
 
-    LaunchedEffect(selectedTournament?.id, user?.uid) {
-        selectedTournament?.id?.let { tourneyId ->
-            user?.uid?.let { userId ->
-                viewModel.checkRegistrationStatus(tourneyId, userId)
-            }
-        }
+    val userCurrency by viewModel.userCurrency.collectAsState()
+
+    LaunchedEffect(tournamentId) {
+        // Fetch tournament details
+        viewModel.getTournamentById(tournamentId)
+        // No need to manually check registration status here, as the flow listens globally.
     }
 
     val scrollState = rememberScrollState()
@@ -738,16 +740,17 @@ fun TournamentDetailsScreenUI(
                             .background(Color.Black.copy(alpha = 0.1f))
                     )
                     GradientPrimaryButton(
+                        // Use the derived isRegistered state
                         text = when {
-                            registrationStatus == true -> "Registered"
-                            registrationStatus == false -> "Register Now"
-                            else -> "Checking..."
+                            isRegistered -> "Registered"
+                            else -> "Register Now"
                         },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(16.dp)
                             .height(56.dp),
-                        enabled = registrationStatus == false,
+                        // Only allow registration if not already registered
+                        enabled = !isRegistered,
                         onClick = {
                             navController.navigate(
                                 ScreenRoutes.TournamentRegistration(

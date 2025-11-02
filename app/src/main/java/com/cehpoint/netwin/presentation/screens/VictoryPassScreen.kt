@@ -1,5 +1,6 @@
 package com.cehpoint.netwin.presentation.screens
 
+import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -44,15 +45,39 @@ fun VictoryPassScreen(
     val selectedTournament by viewModel.selectedTournament.collectAsState()
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
-    
+
+    // Local UI states
     var roomIdVisible by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
     var showConfetti by remember { mutableStateOf(false) }
-    
+
+    // ⭐️ NEW: State to determine if credentials should be revealed
+    var isRevealTime by remember { mutableStateOf(false) }
+
     // Mock room credentials - replace with actual data from viewModel
     val roomId = selectedTournament?.roomId ?: "12345678"
     val roomPassword = selectedTournament?.roomPassword ?: "NETWIN2024"
-    
+
+    // Logic to calculate reveal status and update countdown every second
+    LaunchedEffect(selectedTournament) {
+        // Only run if the tournament is loaded
+        selectedTournament?.let { tournament ->
+            while (true) {
+                val now = System.currentTimeMillis()
+                // Reveal time is 15 minutes (900,000 milliseconds) before start time
+                val revealTimeMillis = tournament.startTime - (15 * 60 * 1000)
+
+                isRevealTime = now >= revealTimeMillis
+
+                // If revealed, stop the loop and don't re-check
+                if (isRevealTime) break
+
+                delay(1000) // Check every second
+            }
+        }
+    }
+
+
     // Load tournament if not already loaded
     LaunchedEffect(tournamentId) {
         if (selectedTournament?.id != tournamentId) {
@@ -68,13 +93,13 @@ fun VictoryPassScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { 
+                title = {
                     Text(
-                        "Victory Pass", 
+                        "Victory Pass",
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.Bold
                         )
-                    ) 
+                    )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
@@ -106,32 +131,40 @@ fun VictoryPassScreen(
                 if (showConfetti) {
                     ConfettiAnimation()
                 }
-                
+
                 // Hero Card with Room Credentials
                 CredentialsCard(
-                    roomId = roomId,
-                    roomPassword = roomPassword,
+                    // ⭐️ CONDITIONAL VALUES: Show real credentials only if it's reveal time
+                    roomId = if (isRevealTime) roomId else "Hidden",
+                    roomPassword = if (isRevealTime) roomPassword else "Hidden",
                     roomIdVisible = roomIdVisible,
                     passwordVisible = passwordVisible,
+                    isRevealTime = isRevealTime, // Pass the reveal status
                     onToggleRoomId = { roomIdVisible = !roomIdVisible },
                     onTogglePassword = { passwordVisible = !passwordVisible },
                     onCopyRoomId = {
-                        clipboardManager.setText(AnnotatedString(roomId))
+                        if (isRevealTime) clipboardManager.setText(AnnotatedString(roomId))
+                        else Toast.makeText(context, "Room ID is hidden until 15 min before match.", Toast.LENGTH_SHORT).show()
                     },
                     onCopyPassword = {
-                        clipboardManager.setText(AnnotatedString(roomPassword))
+                        if (isRevealTime) clipboardManager.setText(AnnotatedString(roomPassword))
+                        else Toast.makeText(context, "Password is hidden until 15 min before match.", Toast.LENGTH_SHORT).show()
                     },
                     onCopyAll = {
-                        val allDetails = "Room ID: $roomId\nPassword: $roomPassword"
-                        clipboardManager.setText(AnnotatedString(allDetails))
+                        if (isRevealTime) {
+                            val allDetails = "Room ID: $roomId\nPassword: $roomPassword"
+                            clipboardManager.setText(AnnotatedString(allDetails))
+                        } else {
+                            Toast.makeText(context, "Credentials are not yet available.", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 )
-                
+
                 // Tournament Info Card
                 selectedTournament?.let { tournament ->
                     TournamentInfoCard(tournament = tournament)
                 }
-                
+
                 // Countdown and Actions
                 selectedTournament?.let { tournament ->
                     CountdownAndActions(
@@ -140,12 +173,13 @@ fun VictoryPassScreen(
                         onSharePoster = { /* TODO: Share functionality */ }
                     )
                 }
-                
+
                 // Quick Tips Card
                 QuickTipsCard(onViewRules = onNavigateToRules)
-                
+
                 // Bottom CTA
                 Button(
+                    // ⭐️ UPDATED: Calls onBackClick which should navigate to TournamentScreen.kt
                     onClick = onBackClick,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -173,6 +207,7 @@ private fun CredentialsCard(
     roomPassword: String,
     roomIdVisible: Boolean,
     passwordVisible: Boolean,
+    isRevealTime: Boolean, // ⭐️ NEW PARAMETER
     onToggleRoomId: () -> Unit,
     onTogglePassword: () -> Unit,
     onCopyRoomId: () -> Unit,
@@ -208,43 +243,58 @@ private fun CredentialsCard(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "🎉 Room Credentials Ready!",
+                    text = if (isRevealTime) "🎉 Room Credentials Ready!" else "⏳ Room Credentials Hidden",
                     style = MaterialTheme.typography.titleLarge,
                     color = Color.White,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
                 )
             }
-            
+
             Spacer(modifier = Modifier.height(24.dp))
-            
+
             // Room ID Section
             CredentialRow(
                 label = "Room ID",
                 value = roomId,
                 isVisible = roomIdVisible,
+                isEnabled = isRevealTime, // Disable interaction if hidden
                 onToggleVisibility = onToggleRoomId,
                 onCopy = onCopyRoomId
             )
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             // Password Section
             CredentialRow(
                 label = "Password",
                 value = roomPassword,
                 isVisible = passwordVisible,
+                isEnabled = isRevealTime, // Disable interaction if hidden
                 onToggleVisibility = onTogglePassword,
                 onCopy = onCopyPassword
             )
-            
+
             Spacer(modifier = Modifier.height(24.dp))
-            
+
+            if (!isRevealTime) {
+                Text(
+                    text = "ID and Password will be revealed 15 minutes before match start.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Yellow,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+
             // Copy All Button
             Button(
                 onClick = onCopyAll,
+                enabled = isRevealTime, // Disable button if not reveal time
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF3AFFDC),
+                    containerColor = if (isRevealTime) Color(0xFF3AFFDC) else Color(0xFF3AFFDC).copy(alpha = 0.4f),
                     contentColor = Color.Black
                 ),
                 shape = RoundedCornerShape(12.dp)
@@ -269,6 +319,7 @@ private fun CredentialRow(
     label: String,
     value: String,
     isVisible: Boolean,
+    isEnabled: Boolean, // ⭐️ NEW PARAMETER
     onToggleVisibility: () -> Unit,
     onCopy: () -> Unit
 ) {
@@ -279,9 +330,9 @@ private fun CredentialRow(
             color = Color(0xFF3AFFDC),
             fontWeight = FontWeight.Medium
         )
-        
+
         Spacer(modifier = Modifier.height(8.dp))
-        
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -294,33 +345,42 @@ private fun CredentialRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = if (isVisible) value else "••••••••",
+                // ⭐️ DISPLAY LOGIC: Show stars if hidden and not visible, or the hidden text if revealed but toggle is off
+                text = when {
+                    !isEnabled -> "••••••••"
+                    isVisible -> value
+                    else -> "••••••••"
+                },
                 style = MaterialTheme.typography.titleMedium,
-                color = Color.White,
+                color = if (isEnabled) Color.White else Color.Gray,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f)
             )
-            
+
             Row {
+                // Toggle Visibility Button
                 IconButton(
                     onClick = onToggleVisibility,
+                    enabled = isEnabled, // Disable if credentials are not revealed
                     modifier = Modifier.size(40.dp)
                 ) {
                     Icon(
                         imageVector = if (isVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                         contentDescription = if (isVisible) "Hide" else "Show",
-                        tint = Color(0xFF3AFFDC)
+                        tint = if (isEnabled) Color(0xFF3AFFDC) else Color.Gray
                     )
                 }
-                
+
+                // Copy Button
                 IconButton(
                     onClick = onCopy,
+                    enabled = isEnabled, // Disable if credentials are not revealed
                     modifier = Modifier.size(40.dp)
                 ) {
                     Icon(
                         Icons.Default.ContentCopy,
                         contentDescription = "Copy",
-                        tint = Color(0xFF3AFFDC)
+                        tint = if (isEnabled) Color(0xFF3AFFDC) else Color.Gray
                     )
                 }
             }
@@ -346,9 +406,9 @@ private fun TournamentInfoCard(tournament: Tournament) {
                 color = Color(0xFF3AFFDC),
                 fontWeight = FontWeight.Bold
             )
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             TournamentInfoRow("Tournament", tournament.name)
             TournamentInfoRow("Mode", tournament.matchType.ifEmpty { "SQUAD" })
             TournamentInfoRow("Map", tournament.map.ifEmpty { "Erangel" })
@@ -363,18 +423,28 @@ private fun CountdownAndActions(
     onAddToCalendar: () -> Unit,
     onSharePoster: () -> Unit
 ) {
-    val timeUntilStart = remember(tournament.startTime) {
-        val now = System.currentTimeMillis()
-        val timeLeft = tournament.startTime - now
-        if (timeLeft > 0) {
-            val hours = timeLeft / (1000 * 60 * 60)
-            val minutes = (timeLeft % (1000 * 60 * 60)) / (1000 * 60)
-            "${hours}h ${minutes}m"
-        } else {
-            "Started"
+    // ⭐️ Dynamic countdown text based on remaining time
+    var timeUntilStart by remember { mutableStateOf("Calculating...") }
+
+    LaunchedEffect(tournament.startTime) {
+        while (true) {
+            val now = System.currentTimeMillis()
+            val timeLeft = tournament.startTime - now
+
+            timeUntilStart = if (timeLeft > 0) {
+                val hours = timeLeft / (1000 * 60 * 60)
+                val minutes = (timeLeft % (1000 * 60 * 60)) / (1000 * 60)
+                val seconds = (timeLeft % (1000 * 60)) / 1000
+                String.format("%02d:%02d:%02d", hours, minutes, seconds)
+            } else {
+                "LIVE NOW"
+            }
+            if (timeLeft <= 0) break
+            delay(1000)
         }
     }
-    
+
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -396,15 +466,15 @@ private fun CountdownAndActions(
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 Text(
-                    text = "Starts in $timeUntilStart",
+                    text = if (timeUntilStart == "LIVE NOW") timeUntilStart else "Starts in $timeUntilStart",
                     style = MaterialTheme.typography.titleSmall,
                     color = Color(0xFF6C3AFF),
                     fontWeight = FontWeight.Bold
                 )
             }
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             // Action Buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -430,7 +500,7 @@ private fun CountdownAndActions(
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Calendar")
                 }
-                
+
                 OutlinedButton(
                     onClick = onSharePoster,
                     modifier = Modifier.weight(1f),
@@ -474,16 +544,16 @@ private fun QuickTipsCard(onViewRules: () -> Unit) {
                 color = Color(0xFF3AFFDC),
                 fontWeight = FontWeight.Bold
             )
-            
+
             Spacer(modifier = Modifier.height(12.dp))
-            
+
             val tips = listOf(
                 "Open PUBG Mobile/BGMI",
                 "Go to Custom Room",
                 "Enter Room ID and Password",
                 "Wait for match to start"
             )
-            
+
             tips.forEachIndexed { index, tip ->
                 Row(
                     modifier = Modifier.padding(vertical = 4.dp),
@@ -505,9 +575,9 @@ private fun QuickTipsCard(onViewRules: () -> Unit) {
                             fontWeight = FontWeight.Bold
                         )
                     }
-                    
+
                     Spacer(modifier = Modifier.width(12.dp))
-                    
+
                     Text(
                         text = tip,
                         style = MaterialTheme.typography.bodyMedium,
@@ -515,9 +585,9 @@ private fun QuickTipsCard(onViewRules: () -> Unit) {
                     )
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             TextButton(
                 onClick = onViewRules,
                 colors = ButtonDefaults.textButtonColors(

@@ -1,7 +1,10 @@
 package com.cehpoint.netwin.presentation.screens
 
+import android.net.Uri
 import android.util.Log
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -13,7 +16,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,26 +31,24 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material.icons.filled.EmojiEvents
-import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -61,15 +61,14 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -79,6 +78,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
@@ -96,7 +96,6 @@ import com.cehpoint.netwin.presentation.navigation.ScreenRoutes
 import com.cehpoint.netwin.presentation.theme.NetwinTokens
 import com.cehpoint.netwin.presentation.util.FeatureFlags
 import com.cehpoint.netwin.presentation.viewmodels.TournamentEvent
-import com.cehpoint.netwin.presentation.viewmodels.TournamentFilter
 import com.cehpoint.netwin.presentation.viewmodels.TournamentState
 import com.cehpoint.netwin.presentation.viewmodels.TournamentViewModel
 import com.cehpoint.netwin.ui.theme.NetWinCyan
@@ -106,32 +105,15 @@ import com.cehpoint.netwin.utils.NGNTransactionUtils
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
 // Debug/preview toggle: when true, use brand token accents instead of hard-coded accent colors
 private const val USE_ALT_ACCENTS: Boolean = false
 
-
-//// Formats a currency string by trimming unnecessary trailing decimals like ".00" while preserving symbols and separators.
-//private fun tidyMoney(input: String): String {
-//    // Examples:
-//    // "₹1,000.00" -> "₹1,000"
-//    // "INR 1,000.00" -> "INR 1,000"
-//    // "1,000.50" stays as is
-//    return input.replace(Regex("(?<=\\d)\\.00(?!\\d)"), "")
-//}
-//
-///**
-// * A utility function to format prize/fee amounts by removing unnecessary decimals.
-// */
-//private fun formatAmount(amount: Double): String {
-//    return if (amount == amount.toInt().toDouble()) {
-//        amount.toInt().toString()
-//    } else {
-//        amount.toString()
-//    }
-//}
-
+// =====================================================================
+// Main Screen Composable
+// =====================================================================
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterialApi::class)
 @Composable
@@ -147,6 +129,17 @@ fun LegacyTournamentsScreenUI(navController: NavController, viewModel: Tournamen
     val refreshSuccess by viewModel.refreshSuccess.collectAsState()
     val context = LocalContext.current
 
+    // ⭐ FIX 1: Get CoroutineScope for launching non-Compose related async tasks
+    val coroutineScope = rememberCoroutineScope()
+
+    // State for the result submission dialog
+    var showSubmissionDialog by remember { mutableStateOf(false) }
+    var selectedTournamentForSubmission by remember { mutableStateOf<Tournament?>(null) }
+    var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
+
+    // State to track if result has been submitted for a specific tournament (for UI rendering)
+    var submittedTournamentIds by remember { mutableStateOf(setOf<String>()) }
+
     // Get user country and currency
     var userCountry by remember { mutableStateOf("India") }
     var userCurrency by remember { mutableStateOf("INR") }
@@ -161,7 +154,7 @@ fun LegacyTournamentsScreenUI(navController: NavController, viewModel: Tournamen
                     .collection("users")
                     .document(user.uid)
                     .get()
-                    .await()
+                    .await() // .await() is safe inside LaunchedEffect
 
                 userCountry = userDoc.getString("country") ?: "India"
                 userCurrency = if (userCountry.equals("Nigeria", ignoreCase = true) || userCountry.equals("NG", ignoreCase = true)) "NGN" else "INR"
@@ -170,6 +163,34 @@ fun LegacyTournamentsScreenUI(navController: NavController, viewModel: Tournamen
                 userCountry = "India"
                 userCurrency = "INR"
             }
+        }
+    }
+
+    // ⭐ NEW: Function to load existing tournament results
+    fun loadSubmittedTournamentIds(userId: String) {
+        coroutineScope.launch { // Use coroutineScope here
+            try {
+                val resultsSnapshot = FirebaseFirestore.getInstance()
+                    .collection("tournament_results")
+                    .whereEqualTo("userId", userId)
+                    .whereIn("status", listOf("Pending Verification", "Verification Failed", "Prize Distributed", "Verified - No Prize"))
+                    .get()
+                    .await() // Suspend call is safe inside launch
+
+                submittedTournamentIds = resultsSnapshot.documents.mapNotNull { it.getString("tournamentId") }.toSet()
+                Log.d("TournamentsScreen", "Loaded ${submittedTournamentIds.size} existing results for user.")
+
+            } catch (e: Exception) {
+                Log.e("TournamentsScreen", "Error loading existing results: ${e.message}")
+            }
+        }
+    }
+
+    // Initial load of submitted IDs
+    LaunchedEffect(Unit) {
+        val userId = FirebaseAuth.getInstance().currentUser?.uid
+        if (userId != null) {
+            loadSubmittedTournamentIds(userId)
         }
     }
 
@@ -204,6 +225,20 @@ fun LegacyTournamentsScreenUI(navController: NavController, viewModel: Tournamen
         Log.d("TournamentsScreen", "LaunchedEffect - Tournament load event sent")
     }
 
+    // Activity Result Launcher for picking an image
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null && selectedTournamentForSubmission != null) {
+            selectedImageUri = uri
+            showSubmissionDialog = true // Show the submission dialog after picking the image
+        } else {
+            selectedTournamentForSubmission = null
+            Toast.makeText(context, "No screenshot selected or tournament not set.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+
     Scaffold(
         topBar = {
             TournamentsTopBar(
@@ -227,7 +262,23 @@ fun LegacyTournamentsScreenUI(navController: NavController, viewModel: Tournamen
             refreshError = refreshError,
             refreshSuccess = refreshSuccess,
             onRefresh = {
+                val userId = FirebaseAuth.getInstance().currentUser?.uid ?: return@PullRefreshComponent
                 viewModel.handleEvent(TournamentEvent.RefreshTournaments(force = true))
+
+                // ⭐ FIX 2: Use coroutineScope to launch suspend function
+                coroutineScope.launch {
+                    try {
+                        val resultsSnapshot = FirebaseFirestore.getInstance()
+                            .collection("tournament_results")
+                            .whereEqualTo("userId", userId)
+                            .whereIn("status", listOf("Pending Verification", "Verification Failed", "Prize Distributed", "Verified - No Prize"))
+                            .get()
+                            .await() // Suspend call is safe inside launch
+                        submittedTournamentIds = resultsSnapshot.documents.mapNotNull { it.getString("tournamentId") }.toSet()
+                    } catch (e: Exception) {
+                        Log.e("TournamentsScreen", "Error refreshing existing results: ${e.message}")
+                    }
+                }
             },
             onClearRefreshSuccess = {
                 viewModel.clearRefreshSuccess()
@@ -257,18 +308,8 @@ fun LegacyTournamentsScreenUI(navController: NavController, viewModel: Tournamen
                         modifier = Modifier.padding(horizontal = 16.dp)
                     )
                 }
-                item {
-                    TournamentsFilters(
-                        selectedFilter = tournamentState.selectedFilter.name,
-                        onFilterChange = { filter ->
-                            viewModel.handleEvent(TournamentEvent.FilterTournaments(TournamentFilter.valueOf(filter)))
-                        },
-                        isRefreshing = isRefreshing,
-                        onRefresh = {
-                            viewModel.handleEvent(TournamentEvent.RefreshTournaments(force = true))
-                        }
-                    )
-                }
+
+                // ** FILTER ITEM REMOVED AS REQUESTED **
 
                 if (isLoading && !isRefreshing) {
                     item {
@@ -298,7 +339,14 @@ fun LegacyTournamentsScreenUI(navController: NavController, viewModel: Tournamen
                         }
                     }
                 } else {
+                    // Collect the registration status from the ViewModel state
+                    val userRegistrations = tournamentState.userRegistrations
+
                     items(tournaments) { tournament ->
+                        val isUserRegistered = userRegistrations.containsKey(tournament.id)
+                        // ⭐ NEW CHECK: Has the user submitted a result for this tournament ID?
+                        val isResultSubmitted = submittedTournamentIds.contains(tournament.id)
+
                         TournamentCard(
                             tournament = tournament,
                             viewModel = viewModel,
@@ -307,220 +355,169 @@ fun LegacyTournamentsScreenUI(navController: NavController, viewModel: Tournamen
                                 navController.navigate(Screen.TournamentDetails.createRoute(tournament.id))
                             },
                             navController = navController,
-                            currency = userCurrency
+                            currency = userCurrency,
+                            isUserRegistered = isUserRegistered,
+                            isResultSubmitted = isResultSubmitted, // <<< PASS NEW STATE
+                            onScanAndEarnClick = {
+                                if (isResultSubmitted) {
+                                    Toast.makeText(context, "You have already submitted a result for this tournament.", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    // 1. Set the tournament to be submitted for
+                                    selectedTournamentForSubmission = tournament
+                                    // 2. Launch the image picker
+                                    imagePickerLauncher.launch("image/*")
+                                }
+                            }
                         )
                     }
                 }
             }
         }
-    }
-}
 
-// Shimmer utilities and placeholder
-@Composable
-private fun ShimmerTournamentCardPlaceholder() {
-    val transition = rememberInfiniteTransition(label = "shimmer")
-    val shimmerX by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1000f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1100, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart
-        ), label = "x"
-    )
-    val shimmerColors = listOf(
-        NetwinTokens.Surface.copy(alpha = 0.9f),
-        NetwinTokens.SurfaceAlt.copy(alpha = 0.6f),
-        NetwinTokens.Surface.copy(alpha = 0.9f)
-    )
-    val brush = Brush.linearGradient(
-        colors = shimmerColors,
-        start = Offset(shimmerX, 0f),
-        end = Offset(shimmerX + 200f, 0f)
-    )
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = NetwinTokens.Sp16),
-        shape = RoundedCornerShape(NetwinTokens.RadiusLg),
-        colors = CardDefaults.cardColors(containerColor = NetwinTokens.Surface)
-    ) {
-        Column(modifier = Modifier.padding(NetwinTokens.Sp14)) {
-            // Title line
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.6f)
-                    .height(14.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(brush)
-            )
-            Spacer(Modifier.height(NetwinTokens.Sp8))
-            // Chips row
-            Row(horizontalArrangement = Arrangement.spacedBy(NetwinTokens.Sp4)) {
-                repeat(3) {
-                    Box(
-                        modifier = Modifier
-                            .width(70.dp)
-                            .height(18.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(brush)
-                    )
+        // Show the dialog after the image is picked
+        if (showSubmissionDialog && selectedTournamentForSubmission != null && selectedImageUri != null) {
+            ResultSubmissionCustomDialog( // CHANGED TO CUSTOM DIALOG
+                tournament = selectedTournamentForSubmission!!,
+                screenshotUri = selectedImageUri!!,
+                viewModel = viewModel,
+                onDismiss = {
+                    showSubmissionDialog = false
+                    selectedTournamentForSubmission = null
+                    selectedImageUri = null
                 }
-            }
-            Spacer(Modifier.height(NetwinTokens.Sp8))
-            // Capacity bar
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(brush)
             )
-            Spacer(Modifier.height(NetwinTokens.Sp8))
-            // Buttons row
-            Row(horizontalArrangement = Arrangement.spacedBy(NetwinTokens.Sp4)) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(30.dp)
-                        .clip(RoundedCornerShape(NetwinTokens.RadiusSm))
-                        .background(brush)
-                )
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(30.dp)
-                        .clip(RoundedCornerShape(NetwinTokens.RadiusSm))
-                        .background(brush)
-                )
-            }
         }
     }
 }
 
-// ...
+// =====================================================================
+// NEW: Result Submission Dialog (UPDATED for better design)
+// =====================================================================
 
 @Composable
-fun TournamentCardV2(
-    t: Tournament,
-    onDetailsClick: () -> Unit,
-    currency: String, // Added currency parameter
-    onRegisterClick: () -> Unit
+fun ResultSubmissionCustomDialog(
+    tournament: Tournament,
+    screenshotUri: Uri,
+    viewModel: TournamentViewModel,
+    onDismiss: () -> Unit
 ) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = NetwinTokens.Sp8)
-            .border(
-                width = 1.dp,
-                brush = Brush.horizontalGradient(
-                    listOf(
-                        NetwinTokens.Primary.copy(alpha = 0.12f),
-                        NetwinTokens.Accent.copy(alpha = 0.12f)
-                    )
-                ),
-                shape = RoundedCornerShape(NetwinTokens.RadiusLg)
-            )
-            .clip(RoundedCornerShape(NetwinTokens.RadiusLg)),
-        colors = CardDefaults.cardColors(containerColor = NetwinTokens.SurfaceAlt)
-    ) {
-        Column(
+    // *** NEW: Get the current context for use in the ViewModel ***
+    val context = LocalContext.current
+    var isLoading by remember { mutableStateOf(false) }
+
+    // Use a standard Dialog to host the custom content
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
             modifier = Modifier
-                .padding(vertical = NetwinTokens.Sp4)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = NetwinTokens.SurfaceAlt),
+            border = BorderStroke(
+                2.dp,
+                Brush.horizontalGradient(listOf(NetWinCyan, NetWinPurple)) // Vibrant border
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
         ) {
-            // Banner with overlay and countdown (if available)
-            if (!t.bannerImage.isNullOrBlank()) {
-                // TODO: Implement banner image handling
-            }
-
-            Spacer(Modifier.height(NetwinTokens.Sp8))
-            Row(
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = NetwinTokens.Sp4),
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .padding(24.dp)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-//                PrizeInfo(
-//                    label = "Prize Pool",
-//                    value = tidyMoney(NGNTransactionUtils.formatAmount(t.prizePool.toDouble(), "INR")),
-//                    icon = Icons.Default.EmojiEvents,
-//                    color = Color(0xFFFFC107)
-//                )
-//                PrizeInfo(
-//                    label = "Entry Fee",
-//                    value = if (t.entryFee > 0) tidyMoney(NGNTransactionUtils.formatAmount(t.entryFee.toDouble(), "INR")) else "Free",
-//                    icon = Icons.Default.AccountBalanceWallet,
-//                    color = if (t.entryFee > 0) Color(0xFFFF7043) else Color(0xFF4CAF50)
-//                )
-//                PrizeInfo(
-//                    label = "Per Kill",
-//                    value = tidyMoney(NGNTransactionUtils.formatAmount(t.killReward ?: 0.0, "INR")),
-//                    icon = Icons.Default.EmojiEvents,
-//                    color = Color(0xFF26C6DA)
-//                )
+                // Custom Title
+                Text(
+                    text = "Submit Proof for ${tournament.name}", // Dynamic name
+                    color = Color.White,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 22.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                // Tournament ID
+                Text(
+                    text = tournament.id,
+                    color = Color.Gray,
+                    fontSize = 14.sp
+                )
 
-                // UPDATED to use the centralized, tidy formatting function
-                PrizeInfo(
-                    label = "Prize Pool",
-                    value = NGNTransactionUtils.formatAmountTidy(t.prizePool, currency),
-                    icon = Icons.Default.EmojiEvents,
-                    color = Color(0xFFFFC107)
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Instruction Text
+                Text(
+                    text = "Please upload the screenshot of the **final result screen** for verification. This image will be analyzed by AI.",
+                    style = MaterialTheme.typography.bodyMedium.copy(color = Color.LightGray),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
-                PrizeInfo(
-                    label = "Entry Fee",
-                    value = if (t.entryFee > 0) NGNTransactionUtils.formatAmountTidy(t.entryFee, currency) else "Free",
-                    icon = Icons.Default.AccountBalanceWallet,
-                    color = if (t.entryFee > 0) Color(0xFFFF7043) else Color(0xFF4CAF50)
-                )
-                PrizeInfo(
-                    label = "Per Kill",
-                    value = NGNTransactionUtils.formatAmountTidy(t.killReward ?: 0.0, currency),
-                    icon = Icons.Default.EmojiEvents,
-                    color = Color(0xFF26C6DA)
-                )
-            }
-            // Countdown between currency row and capacity
-            if (t.computedStatus == TournamentStatus.UPCOMING || t.computedStatus == TournamentStatus.STARTS_SOON) {
-                Spacer(Modifier.height(NetwinTokens.Sp4))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Start
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Screenshot Preview
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp) // Slightly taller preview
+                        .clip(RoundedCornerShape(12.dp)),
+                    border = BorderStroke(3.dp, NetWinCyan.copy(alpha = 0.8f)) // Thicker, vibrant border
                 ) {
-                    Box(modifier = Modifier.scale(0.8f)) { // subtle size reduction for visual balance
-                        DetailsCountdownBadge(targetTimeMillis = t.startTime)
+                    AsyncImage(
+                        model = screenshotUri,
+                        contentDescription = "Selected Screenshot",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(32.dp))
+
+                // Action Buttons
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Submit Button (Using the Gradient Primary Button style)
+                    GradientPrimaryButton(
+                        text = if (isLoading) "Submitting..." else "Submit Proof",
+                        enabled = !isLoading,
+                        onClick = {
+                            isLoading = true
+                            // *** CRITICAL UPDATE: Pass the context for image analysis ***
+                            viewModel.submitTournamentResult(
+                                context = context, // Pass the context here
+                                tournamentId = tournament.id,
+                                screenshotUri = screenshotUri,
+                                onSuccess = {
+                                    Toast.makeText(context, "Proof submitted successfully! Pending AI review.", Toast.LENGTH_LONG).show()
+                                    onDismiss()
+                                },
+                                onFailure = { errorMessage ->
+                                    // Removed 'kills = 0' as it's no longer required by the new ViewModel signature
+                                    Toast.makeText(context, "Submission failed: $errorMessage", Toast.LENGTH_LONG).show()
+                                    isLoading = false
+                                }
+                            )
+                        }
+                    )
+
+                    // Cancel Button
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        shape = RoundedCornerShape(NetwinTokens.RadiusSm),
+                        border = BorderStroke(1.dp, Color.Gray.copy(alpha = 0.5f))
+                    ) {
+                        Text("Cancel", color = Color.Gray)
                     }
                 }
             }
-            // Subtle divider for hierarchy
-            Divider(
-                color = NetwinTokens.Primary.copy(alpha = 0.08f),
-                thickness = 0.5.dp,
-                modifier = Modifier.padding(vertical = NetwinTokens.Sp4)
-            )
-            TournamentCapacityIndicator(
-                registeredTeams = t.registeredTeams,
-                maxTeams = t.maxTeams
-            )
-            Spacer(Modifier.height(NetwinTokens.Sp8))
-            Row(horizontalArrangement = Arrangement.spacedBy(NetwinTokens.Sp4)) {
-                OutlinedButton(
-                    onClick = onDetailsClick,
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(NetwinTokens.RadiusSm),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = NetwinTokens.Primary),
-                    border = BorderStroke(1.dp, NetwinTokens.Primary)
-                ) { Text("Details", fontWeight = FontWeight.SemiBold, color = NetwinTokens.Primary) }
-
-                GradientPrimaryButton(
-                    text = "Register",
-                    modifier = Modifier.weight(1f),
-                    onClick = onRegisterClick
-                )
-            }
         }
     }
 }
+
+// =====================================================================
+// Core Screen Components (MODIFIED)
+// =====================================================================
 
 @Composable
 fun TournamentsTopBar(
@@ -561,7 +558,6 @@ fun TournamentsTopBar(
         Surface(
             color = NetwinTokens.SurfaceAlt,
             shape = RoundedCornerShape(12.dp),
-//            border = BorderStroke(1.dp, NetwinTokens.Primary.copy(alpha = 0.24f))
             border = BorderStroke(1.dp, Brush.horizontalGradient(listOf(NetWinPurple, NetWinPink, NetWinCyan))),
             onClick = { navController.navigate(ScreenRoutes.WalletScreen) }
         ) {
@@ -580,19 +576,6 @@ fun TournamentsTopBar(
                     color = NetwinTokens.TextPrimary,
                     fontSize = MaterialTheme.typography.bodyMedium.fontSize
                 )
-
-                // Debug-only feature toggle button
-//            if (BuildConfig.DEBUG && onToggleUi != null) {
-//                Spacer(modifier = Modifier.width(12.dp))
-//                IconButton(onClick = onToggleUi) {
-//                    // Reuse an icon to avoid extra imports; color indicates current state
-//                    Icon(
-//                        imageVector = Icons.Default.FilterList,
-//                        contentDescription = "Toggle Tournament UI V2",
-//                        tint = if (FeatureFlags.isTournamentUiV2()) Color.White else Color(0xFF757575)
-//                    )
-//                }
-//            }
             }
         }
     }
@@ -639,7 +622,7 @@ fun WelcomeCard(userName: String) {
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
-                    text = "Welcome Back, $userName!",
+                    text = "Welcome Back",
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = MaterialTheme.typography.headlineMedium.fontSize
@@ -655,378 +638,10 @@ fun WelcomeCard(userName: String) {
     }
 }
 
-@Composable
-fun TournamentsFilters(
-    selectedFilter: String,
-    onFilterChange: (String) -> Unit,
-    isRefreshing: Boolean = false,
-    onRefresh: () -> Unit = {}
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .background(NetwinTokens.Background)
-            .padding(horizontal = 16.dp, vertical = 16.dp)
-            .horizontalScroll(rememberScrollState())
-    ) {
-        FilterChip(
-            text = "Filter",
-            icon = Icons.Default.FilterList,
-            selected = selectedFilter == "Filter",
-            onClick = { onFilterChange("Filter") }
-        )
-        Spacer(Modifier.width(12.dp))
-        FilterChip(
-            text = "All Games",
-            icon = Icons.Default.EmojiEvents,
-            selected = selectedFilter == "All Games",
-            onClick = { onFilterChange("All Games") }
-        )
-        Spacer(Modifier.width(12.dp))
-        FilterChip(
-            text = "All Maps",
-            icon = Icons.Default.Map,
-            selected = selectedFilter == "All Maps",
-            onClick = { onFilterChange("All Maps") }
-        )
-        // Refresh chip/button removed as requested
-    }
-
-    Spacer(Modifier.width(12.dp))
-
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .background(NetwinTokens.Background)
-            .padding(horizontal = 16.dp, vertical = 16.dp)
-            .horizontalScroll(rememberScrollState())
-    ) {
-        FilterChip(
-            text = "Entry Fee",
-            icon = Icons.Default.AccountBalanceWallet,
-            selected = selectedFilter == "Entry Fee",
-            onClick = { onFilterChange("Entry Fee") }
-        )
-    }
-}
-
-@Composable
-fun FilterChip(
-    text: String,
-    icon: ImageVector,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    OutlinedButton(
-        onClick = onClick,
-        shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, if (selected) NetwinTokens.Primary else NetwinTokens.Primary.copy(alpha = 0.2f)),
-        colors = ButtonDefaults.outlinedButtonColors(
-            containerColor = NetwinTokens.Surface,
-            contentColor = if (selected) NetwinTokens.TextPrimary else NetwinTokens.TextSecondary
-        ),
-        modifier = Modifier.height(36.dp),
-        contentPadding = PaddingValues(horizontal = 12.dp)
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = if (selected) NetwinTokens.Primary else NetwinTokens.TextSecondary,
-            modifier = Modifier.size(18.dp)
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text,
-            fontSize = 14.sp
-        )
-    }
-}
-//
-//@Composable
-//fun TournamentCard(
-//    tournament: Tournament,
-//    viewModel: TournamentViewModel,
-//    onCardClick: () -> Unit,
-//    navController: NavController,
-//    currency: String
-//) {
-//    // ... existing code ...
-//
-//    val interactionSource = remember { MutableInteractionSource() }
-//    val isPressed by interactionSource.collectIsPressedAsState()
-//    val scale by animateFloatAsState(
-//        targetValue = if (isPressed) 0.99f else 1f,
-//        animationSpec = spring(
-//            dampingRatio = Spring.DampingRatioMediumBouncy,
-//            stiffness = Spring.StiffnessLow
-//        )
-//    )
-//
-//    Card(
-//        modifier = Modifier
-//            .fillMaxWidth()
-//            .padding(horizontal = 16.dp, vertical = 8.dp)
-//            .shadow(
-//                elevation = 4.dp,
-//                shape = RoundedCornerShape(12.dp),
-//                spotColor = NetwinTokens.Primary.copy(alpha = 0.1f)
-//            )
-//            .graphicsLayer {
-//                scaleX = scale
-//                scaleY = scale
-//            }
-//            .clickable(
-//                interactionSource = interactionSource,
-//                onClick = onCardClick,
-//                role = Role.Button,
-//                indication = ripple(
-//                    bounded = true,
-//                    radius = 300.dp,
-//                    color = NetwinTokens.Primary
-//                )
-//            ),
-//        shape = RoundedCornerShape(12.dp),
-//        colors = CardDefaults.cardColors(
-//            containerColor = if (isPressed)
-//                NetwinTokens.SurfaceAlt.copy(alpha = 0.9f)
-//            else
-//                NetwinTokens.SurfaceAlt
-//        ),
-//        elevation = CardDefaults.cardElevation(
-//            defaultElevation = 2.dp,
-//            pressedElevation = 1.dp
-//        )
-//    ) {
-//        Column(
-//            modifier = Modifier
-//                .fillMaxWidth()
-//        ) {
-//            // 1. Banner Box (140dp) - Image + Overlays ONLY
-//            Box(
-//                modifier = Modifier
-//                    .fillMaxWidth()
-//                    .height(140.dp)
-//            ) {
-//                // Background Image with fallback color
-//                if (tournament.bannerImage != null) {
-//                    AsyncImage(
-//                        model = tournament.bannerImage,
-//                        contentDescription = "Tournament banner",
-//                        contentScale = ContentScale.Crop,
-//                        modifier = Modifier.fillMaxSize()
-//                    )
-//                } else {
-//                    Box(
-//                        modifier = Modifier
-//                            .fillMaxSize()
-//                            .background(NetwinTokens.SurfaceAlt)
-//                    )
-//                }
-//
-//                // Dark overlay for text contrast
-//                Box(
-//                    modifier = Modifier
-//                        .fillMaxSize()
-//                        .background(
-//                            brush = Brush.verticalGradient(
-//                                colors = listOf(
-//                                    Color.Transparent,
-//                                    Color.Black.copy(alpha = 0.7f)
-//                                ),
-//                                startY = 0f,
-//                                endY = Float.POSITIVE_INFINITY
-//                            )
-//                        )
-//                )
-//
-//                // Tournament name and status row (top overlay)
-//                Row(
-//                    modifier = Modifier
-//                        .fillMaxWidth()
-//                        .padding(16.dp),
-//                    horizontalArrangement = Arrangement.SpaceBetween,
-//                    verticalAlignment = Alignment.Top
-//                ) {
-//                    Text(
-//                        text = tournament.name,
-//                        color = Color.White,
-//                        fontWeight = FontWeight.Bold,
-//                        fontSize = 18.sp,
-//                        maxLines = 2,
-//                        overflow = TextOverflow.Ellipsis,
-//                        modifier = Modifier.weight(1f)
-//                    )
-//
-//                    TournamentStatusBadge(
-//                        status = tournament.computedStatus,
-//                        modifier = Modifier.padding(start = 8.dp)
-//                    )
-//                }
-//
-//                // Map location (bottom overlay)
-//                Row(
-//                    modifier = Modifier
-//                        .fillMaxWidth()
-//                        .padding(16.dp)
-//                        .align(Alignment.BottomStart),
-//                    verticalAlignment = Alignment.CenterVertically
-//                ) {
-//                    Icon(
-//                        imageVector = Icons.Default.PinDrop,
-//                        contentDescription = "Location",
-//                        tint = Color.White,
-//                        modifier = Modifier.size(16.dp)
-//                    )
-//                    Spacer(modifier = Modifier.width(4.dp))
-//                    Text(
-//                        text = tournament.map,
-//                        color = Color.White,
-//                        fontSize = 14.sp,
-//                        maxLines = 1,
-//                        overflow = TextOverflow.Ellipsis
-//                    )
-//                }
-//            }
-//
-//            // 2. Content Column - Tournament details
-//            Column(
-//                modifier = Modifier
-//                    .fillMaxWidth()
-//                    .padding(16.dp)
-//            ) {
-//                // Prize pool, entry fee, etc.
-//                Row(
-//                    modifier = Modifier
-//                        .fillMaxWidth()
-//                        .padding(vertical = 8.dp),
-//                    horizontalArrangement = Arrangement.SpaceBetween,
-//                    verticalAlignment = Alignment.CenterVertically
-//                ) {
-//                    InfoChip(
-//                        label = "Prize Pool",
-//                        value = "${tidyMoney(currency)}${tidyMoney(tournament.prizePool.toString())}",
-//                        valueColor = NetwinTokens.Primary
-//                    )
-//
-//                    InfoChip(
-//                        label = "Per Kill",
-//                        value = "${tidyMoney(currency)}${tidyMoney(tournament.killReward.toString())}",
-//                        valueColor = NetwinTokens.Accent
-//                    )
-//
-//                    InfoChip(
-//                        label = "Entry",
-//                        value = if (tournament.entryFee > 0)
-//                            "${tidyMoney(currency)}${tidyMoney(tournament.entryFee.toString())}"
-//                        else "Free",
-//                        valueColor = if (tournament.entryFee > 0)
-//                            NetwinTokens.TextPrimary
-//                        else NetwinTokens.Tertiary
-//                    )
-//                }
-//
-//                Spacer(modifier = Modifier.height(12.dp))
-//
-//                // Mode and team size
-//                Row(
-//                    modifier = Modifier.fillMaxWidth(),
-//                    verticalAlignment = Alignment.CenterVertically,
-//                    horizontalArrangement = Arrangement.SpaceBetween
-//                ) {
-//                    // Game mode chip
-//                    ModeChip(mode = tournament.mode)
-//
-//                    // Team size
-//                    Row(verticalAlignment = Alignment.CenterVertically) {
-//                        Icon(
-//                            imageVector = Icons.Default.People,
-//                            contentDescription = "Team size",
-//                            tint = NetwinTokens.TextSecondary,
-//                            modifier = Modifier.size(16.dp)
-//                        )
-//                        Spacer(modifier = Modifier.width(4.dp))
-//                        Text(
-//                            text = "${tournament.teamSize}v${tournament.teamSize}",
-//                            color = NetwinTokens.TextSecondary,
-//                            fontSize = 14.sp
-//                        )
-//                    }
-//
-//                    // Registration status
-//                    Text(
-//                        text = "${tournament.registeredTeams}/${tournament.maxTeams} Teams",
-//                        color = if (tournament.registeredTeams >= tournament.maxTeams)
-//                            NetwinTokens.Accent
-//                        else NetwinTokens.Primary,
-//                        fontWeight = FontWeight.Medium,
-//                        fontSize = 14.sp
-//                    )
-//                }
-//
-//                // 3. Divider
-//                Divider(
-//                    color = NetwinTokens.SurfaceAlt.copy(alpha = 0.5f),
-//                    modifier = Modifier.padding(vertical = 12.dp)
-//                )
-//
-//                // 4. Registration button
-//                val isFull = tournament.registeredTeams >= tournament.maxTeams
-//                val statusAllows = tournament.computedStatus == TournamentStatus.UPCOMING ||
-//                                tournament.computedStatus == TournamentStatus.STARTS_SOON ||
-//                                tournament.computedStatus == TournamentStatus.ONGOING ||
-//                                tournament.computedStatus == TournamentStatus.ROOM_OPEN
-//
-//                Button(
-//                    onClick = {
-//                        if (statusAllows && !isFull) {
-//                            navController.navigate(
-//                                TournamentRegistration(
-//                                    tournamentId = tournament.id,
-//                                    stepIndex = 0
-//                                )
-//                            )
-//                        } else {
-//                            onCardClick()
-//                        }
-//                    },
-//                    modifier = Modifier
-//                        .fillMaxWidth()
-//                        .height(48.dp),
-//                    colors = ButtonDefaults.buttonColors(
-//                        containerColor = if (isFull || !statusAllows)
-//                            NetwinTokens.Surface
-//                        else NetwinTokens.Primary,
-//                        contentColor = if (isFull || !statusAllows)
-//                            NetwinTokens.TextSecondary
-//                        else Color.White,
-//                        disabledContainerColor = NetwinTokens.SurfaceAlt,
-//                        disabledContentColor = NetwinTokens.TextSecondary
-//                    ),
-//                    shape = RoundedCornerShape(8.dp),
-//                    enabled = !isFull && statusAllows
-//                ) {
-//                    Text(
-//                        text = when {
-//                            isFull -> "Tournament Full"
-//                            tournament.computedStatus == TournamentStatus.ONGOING -> "Join Now"
-//                            else -> "Register Now"
-//                        },
-//                        fontWeight = FontWeight.SemiBold,
-//                        fontSize = 16.sp
-//                    )
-//                }
-//            }
-//        }
-//    }
-//}
-
-
 /**
- * The final, pixel-perfect implementation of the Tournament Card, matching the provided screenshots.
+ * The final, pixel-perfect implementation of the Tournament Card.
  *
- * @param tournament The data object containing all tournament information.
- * @param onCardClick Lambda function to be invoked when the card is clicked.
- * @param navController The navigation controller for handling navigation events.
+ * **UPDATED:** Added `onScanAndEarnClick` and `isResultSubmitted` parameter.
  */
 @Composable
 fun TournamentCard(
@@ -1034,21 +649,16 @@ fun TournamentCard(
     onCardClick: () -> Unit,
     viewModel: TournamentViewModel,
     currency: String,
-    navController: NavController
+    navController: NavController,
+    isUserRegistered: Boolean,
+    isResultSubmitted: Boolean, // <<< NEW STATE ADDED
+    onScanAndEarnClick: (Tournament) -> Unit
 ) {
-    // 2. CREATE A DYNAMIC CURRENCY SYMBOL
-    val currencySymbol = when (currency) {
-        "NGN" -> "₦"
-        else -> "₹" // Default to INR
-    }
-
     // Define the exact colors from the screenshot for clarity
     val cardBackgroundColor = Color(0xFF2C2B3E)
     val prizeColor = Color(0xFFFFD600) // Yellowish gold
     val killColor = Color(0xFF00E5FF)   // Cyan/Blue
     val feeColor = Color(0xFFFF4D6D)     // Reddish pink
-    val buttonGradient = Brush.horizontalGradient(listOf(Color(0xFF6A11CB), Color(0xFF2575FC)))
-    // Define the gradient colors based on the analyzed imagek
     val gradientColors = listOf(
         Color(0xFF903AE3), // Left - Purple
         Color(0xFFA970B4), // Center - Purple-Pink blend
@@ -1134,9 +744,6 @@ fun TournamentCard(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-//                    InfoColumn(label = "Prize Pool", value = "₹${formatAmount(tournament.prizePool)}", valueColor = prizeColor)
-//                    InfoColumn(label = "Per Kill", value = "₹${formatAmount(tournament.killReward ?: 0.0)}", valueColor = killColor)
-//                    InfoColumn(label = "Entry Fee", value = "₹${formatAmount(tournament.entryFee)}", valueColor = feeColor)
                     PrizeInfo(
                         label = "Prize Pool",
                         value = NGNTransactionUtils.formatAmountTidy(tournament.prizePool, currency),
@@ -1196,57 +803,108 @@ fun TournamentCard(
                     )
                 }
 
-                // Action Buttons
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            /* Handle Details Click */
-                            navController.navigate(Screen.TournamentDetails.createRoute(tournament.id))
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(50.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, detailsButtonOutlineColor)
-                    ) {
-                        Text("Details", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                    }
+                // ** ACTION BUTTONS - MODIFIED LOGIC **
+                val showScanButton = tournament.computedStatus == TournamentStatus.ONGOING && isUserRegistered
+
+                if (showScanButton || isResultSubmitted) {
+                    val buttonText = if (isResultSubmitted) "Result Submitted" else "Scan and Earn"
+                    val buttonEnabled = !isResultSubmitted
+                    val buttonColor = if (isResultSubmitted) Color(0xFF616161) else Color(0xFF4CAF50)
+
                     Button(
                         onClick = {
-                            /* Handle Register Click */
-                            navController.navigate(
-                                ScreenRoutes.TournamentRegistration(
-                                    tournamentId = tournament.id,
-                                    stepIndex = 1
-                                )
-                            )
-
+                            if (buttonEnabled) {
+                                // Launch the image picker/submission flow
+                                onScanAndEarnClick(tournament)
+                            }
+                            // If disabled, the Toast is handled in onScanAndEarnClick lambda in LegacyTournamentsScreenUI
                         },
+                        enabled = buttonEnabled,
                         modifier = Modifier
-                            .weight(1f)
+                            .fillMaxWidth()
                             .height(50.dp),
                         shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(), // Remove default padding
+                        contentPadding = PaddingValues(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent)
                     ) {
                         Box(
-//                            modifier = Modifier
-//                                .fillMaxSize()
-//                                .background(buttonGradient)
-//                                .padding(horizontal = 16.dp, vertical = 8.dp),
-//                            contentAlignment = Alignment.Center
                             modifier = Modifier
                                 .fillMaxSize()
                                 .background(
-                                    brush = Brush.horizontalGradient(gradientColors),
+                                    // Use gray gradient when submitted, otherwise green
+                                    brush = Brush.horizontalGradient(
+                                        if (isResultSubmitted) listOf(Color(0xFF616161), Color(0xFF424242))
+                                        else listOf(Color(0xFF4CAF50), Color(0xFF8BC34A))
+                                    ),
                                     shape = RoundedCornerShape(12.dp)
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("Register", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = if (isResultSubmitted) Icons.Default.CheckCircle else Icons.Default.QrCodeScanner,
+                                    contentDescription = buttonText,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    buttonText,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    // Scenario 2: Default - Show Details and Register
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                /* Handle Details Click */
+                                navController.navigate(Screen.TournamentDetails.createRoute(tournament.id))
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(50.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, detailsButtonOutlineColor)
+                        ) {
+                            Text("Details", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        Button(
+                            onClick = {
+                                /* Handle Register Click */
+                                navController.navigate(
+                                    ScreenRoutes.TournamentRegistration(
+                                        tournamentId = tournament.id,
+                                        stepIndex = 1
+                                    )
+                                )
+
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(50.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(), // Remove default padding
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(
+                                        brush = Brush.horizontalGradient(gradientColors),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Register", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                            }
                         }
                     }
                 }
@@ -1254,6 +912,11 @@ fun TournamentCard(
         }
     }
 }
+
+
+// =====================================================================
+// Helper & Sub-Components (UNCHANGED)
+// =====================================================================
 
 /**
  * NEW: A decorated, standalone badge that displays a countdown timer.
@@ -1325,9 +988,10 @@ fun CountdownBadge(targetTimeMillis: Long, modifier: Modifier = Modifier) {
 
 /**
  * A composable for displaying a piece of info with a label and a colored value.
+ * Renamed from InfoColumn to InfoDetail to avoid conflicts.
  */
 @Composable
-private fun InfoColumn(label: String, value: String, valueColor: Color) {
+private fun InfoDetail(label: String, value: String, valueColor: Color) {
     Column {
         Text(text = label, color = Color.LightGray, fontSize = 14.sp)
         Spacer(modifier = Modifier.height(4.dp))
@@ -1409,7 +1073,6 @@ fun ModeChip(mode: TournamentMode, modifier: Modifier = Modifier) {
 }
 
 
-
 @Composable
 fun GradientPrimaryButton(
     text: String,
@@ -1424,47 +1087,238 @@ fun GradientPrimaryButton(
             .height(48.dp),
         enabled = enabled,
         colors = ButtonDefaults.buttonColors(
-            containerColor = NetwinTokens.Primary,
+            containerColor = Color.Transparent, // Use transparent so the gradient box can show through
             disabledContainerColor = NetwinTokens.Primary.copy(alpha = 0.5f)
         ),
+        contentPadding = PaddingValues(), // Remove default padding
         shape = RoundedCornerShape(NetwinTokens.RadiusSm)
     ) {
-        Text(
-            text = text,
-            fontWeight = FontWeight.SemiBold,
-            color = Color.White
-        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    brush = Brush.horizontalGradient(
+                        listOf(
+                            Color(0xFF903AE3), // Left - Purple
+                            Color(0xFFA970B4), // Center - Purple-Pink blend
+                            Color(0xFFDD3BA8)  // Right - Pink
+                        )
+                    ),
+                    shape = RoundedCornerShape(NetwinTokens.RadiusSm)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            if (text.endsWith("...")) { // Check for loading text
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
+                    color = Color.White
+                )
+            } else {
+                Text(
+                    text = text,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White
+                )
+            }
+        }
     }
 }
 
-//@Composable
-//fun ModeChip(mode: TournamentMode, modifier: Modifier = Modifier) {
-//    val text = when (mode) {
-//        TournamentMode.SOLO -> "Solo"
-//        TournamentMode.DUO -> "Duo"
-//        TournamentMode.SQUAD -> "Squad"
-//        TournamentMode.TRIO -> "Trio"
-//        TournamentMode.CUSTOM -> "Custom"
-//    }
-//    Surface(
-//        color = NetwinTokens.Surface,
-//        shape = RoundedCornerShape(10.dp),
-//        border = BorderStroke(1.dp, NetwinTokens.Primary.copy(alpha = 0.35f)),
-//        modifier = modifier
-//    ) {
-//        Text(
-//            text = text,
-//            color = Color.White,
-//            fontWeight = FontWeight.Bold,
-//            fontSize = 12.sp,
-//            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-//        )
-//    }
-//}
+// Shimmer utilities and placeholder (UNCHANGED)
+@Composable
+private fun ShimmerTournamentCardPlaceholder() {
+    val transition = rememberInfiniteTransition(label = "shimmer")
+    val shimmerX by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1100, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart
+        ), label = "x"
+    )
+    val shimmerColors = listOf(
+        NetwinTokens.Surface.copy(alpha = 0.9f),
+        NetwinTokens.SurfaceAlt.copy(alpha = 0.6f),
+        NetwinTokens.Surface.copy(alpha = 0.9f)
+    )
+    val brush = Brush.linearGradient(
+        colors = shimmerColors,
+        start = Offset(shimmerX, 0f),
+        end = Offset(shimmerX + 200f, 0f)
+    )
 
-// -------------------------
-// Compose Previews (no backend)
-// -------------------------
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = NetwinTokens.Sp16),
+        shape = RoundedCornerShape(NetwinTokens.RadiusLg),
+        colors = CardDefaults.cardColors(containerColor = NetwinTokens.Surface)
+    ) {
+        Column(modifier = Modifier.padding(NetwinTokens.Sp14)) {
+            // Title line
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.6f)
+                    .height(14.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(brush)
+            )
+            Spacer(Modifier.height(NetwinTokens.Sp8))
+            // Chips row
+            Row(horizontalArrangement = Arrangement.spacedBy(NetwinTokens.Sp4)) {
+                repeat(3) {
+                    Box(
+                        modifier = Modifier
+                            .width(70.dp)
+                            .height(18.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(brush)
+                    )
+                }
+            }
+            Spacer(Modifier.height(NetwinTokens.Sp8))
+            // Capacity bar
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(brush)
+            )
+            Spacer(Modifier.height(NetwinTokens.Sp8))
+            // Buttons row
+            Row(horizontalArrangement = Arrangement.spacedBy(NetwinTokens.Sp4)) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(NetwinTokens.RadiusSm))
+                        .background(brush)
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(NetwinTokens.RadiusSm))
+                        .background(brush)
+                )
+            }
+        }
+    }
+}
+
+// =====================================================================
+// Alternative/Unused Components (V2 Card) - UNCHANGED
+// =====================================================================
+
+@Composable
+fun TournamentCardV2(
+    t: Tournament,
+    onDetailsClick: () -> Unit,
+    currency: String, // Added currency parameter
+    onRegisterClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = NetwinTokens.Sp8)
+            .border(
+                width = 1.dp,
+                brush = Brush.horizontalGradient(
+                    listOf(
+                        NetwinTokens.Primary.copy(alpha = 0.12f),
+                        NetwinTokens.Accent.copy(alpha = 0.12f)
+                    )
+                ),
+                shape = RoundedCornerShape(NetwinTokens.RadiusLg)
+            )
+            .clip(RoundedCornerShape(NetwinTokens.RadiusLg)),
+        colors = CardDefaults.cardColors(containerColor = NetwinTokens.SurfaceAlt)
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(vertical = NetwinTokens.Sp4)
+        ) {
+            // Banner with overlay and countdown (if available)
+            if (!t.bannerImage.isNullOrBlank()) {
+                // TODO: Implement banner image handling
+            }
+
+            Spacer(Modifier.height(NetwinTokens.Sp8))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = NetwinTokens.Sp4),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+
+                // UPDATED to use the centralized, tidy formatting function
+                PrizeInfo(
+                    label = "Prize Pool",
+                    value = NGNTransactionUtils.formatAmountTidy(t.prizePool, currency),
+                    icon = Icons.Default.EmojiEvents,
+                    color = Color(0xFFFFC107)
+                )
+                PrizeInfo(
+                    label = "Entry Fee",
+                    value = if (t.entryFee > 0) NGNTransactionUtils.formatAmountTidy(t.entryFee, currency) else "Free",
+                    icon = Icons.Default.AccountBalanceWallet,
+                    color = if (t.entryFee > 0) Color(0xFFFF7043) else Color(0xFF4CAF50)
+                )
+                PrizeInfo(
+                    label = "Per Kill",
+                    value = NGNTransactionUtils.formatAmountTidy(t.killReward ?: 0.0, currency),
+                    icon = Icons.Default.EmojiEvents,
+                    color = Color(0xFF26C6DA)
+                )
+            }
+            // Countdown between currency row and capacity
+            if (t.computedStatus == TournamentStatus.UPCOMING || t.computedStatus == TournamentStatus.STARTS_SOON) {
+                Spacer(Modifier.height(NetwinTokens.Sp4))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Start
+                ) {
+                    /* Box(modifier = Modifier.scale(0.8f)) { // subtle size reduction for visual balance
+                        DetailsCountdownBadge(targetTimeMillis = t.startTime)
+                    } */
+                }
+            }
+            // Subtle divider for hierarchy
+            Divider(
+                color = NetwinTokens.Primary.copy(alpha = 0.08f),
+                thickness = 0.5.dp,
+                modifier = Modifier.padding(vertical = NetwinTokens.Sp4)
+            )
+            TournamentCapacityIndicator(
+                registeredTeams = t.registeredTeams,
+                maxTeams = t.maxTeams
+            )
+            Spacer(Modifier.height(NetwinTokens.Sp8))
+            Row(horizontalArrangement = Arrangement.spacedBy(NetwinTokens.Sp4)) {
+                OutlinedButton(
+                    onClick = onDetailsClick,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(NetwinTokens.RadiusSm),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = NetwinTokens.Primary),
+                    border = BorderStroke(1.dp, NetwinTokens.Primary)
+                ) { Text("Details", fontWeight = FontWeight.SemiBold, color = NetwinTokens.Primary) }
+
+                GradientPrimaryButton(
+                    text = "Register",
+                    modifier = Modifier.weight(1f),
+                    onClick = onRegisterClick
+                )
+            }
+        }
+    }
+}
+
+
+// =====================================================================
+// Compose Previews - UNCHANGED
+// =====================================================================
 
 @Preview(showBackground = true, backgroundColor = 0xFF121212)
 @Composable
@@ -1480,19 +1334,20 @@ private fun Preview_InfoChip() {
             .background(Color(0xFF121212))
             .padding(16.dp)
     ) {
-        InfoChip(
+        // ** FIX: Use the renamed InfoDetail composable **
+        InfoDetail(
             label = "Prize Pool", value = "₹5,000",
-            valueColor = TODO()
+            valueColor = Color(0xFFFFD600)
         )
         Spacer(Modifier.width(12.dp))
-        InfoChip(
+        InfoDetail(
             label = "Per Kill", value = "₹10",
-            valueColor = TODO()
+            valueColor = Color(0xFF00E5FF)
         )
         Spacer(Modifier.width(12.dp))
-        InfoChip(
+        InfoDetail(
             label = "Entry Fee", value = "Free",
-            valueColor = TODO()
+            valueColor = Color(0xFF4CAF50)
         )
     }
 }
@@ -1530,4 +1385,3 @@ private fun Preview_ModeChip() {
         ModeChip(TournamentMode.CUSTOM)
     }
 }
-

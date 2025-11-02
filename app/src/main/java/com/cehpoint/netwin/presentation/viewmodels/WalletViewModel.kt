@@ -16,13 +16,18 @@ import com.cehpoint.netwin.domain.repository.WalletRepository
 import com.cehpoint.netwin.utils.KYCMonitor
 import com.cehpoint.netwin.utils.NetworkStateMonitor
 import com.cehpoint.netwin.utils.OfflineQueueManager
+// 🏆 NEW IMPORT: Now resolvable since we created the file
+import com.cehpoint.netwin.utils.TournamentResultMonitor
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import com.google.firebase.firestore.DocumentSnapshot
+import com.cehpoint.netwin.domain.repository.WalletData // Needed for the unified flow
 
 // Dialog state for controlling payment-related UI across configuration changes and process death
 @Immutable
@@ -53,11 +58,13 @@ class WalletViewModel @Inject constructor(
     private val repository: WalletRepository,
     private val networkStateMonitor: NetworkStateMonitor,
     private val offlineQueueManager: OfflineQueueManager,
-    private val kycMonitor: KYCMonitor
+    private val kycMonitor: KYCMonitor,
+    // 🏆 NEW DEPENDENCY ADDED: Now KSP can resolve this type
+    private val tournamentResultMonitor: TournamentResultMonitor
 ) : ViewModel() {
-    
-    // State flows
-    private val _walletBalance = MutableStateFlow(0.0)
+
+    // State flows (These are collected by WalletScreen)
+    private val _walletBalance = MutableStateFlow(0.0) // Maps to Available Balance
     val walletBalance: StateFlow<Double> = _walletBalance.asStateFlow()
 
     private val _transactions = MutableStateFlow<List<Transaction>>(emptyList())
@@ -70,8 +77,8 @@ class WalletViewModel @Inject constructor(
     private val _hasMoreTransactions = MutableStateFlow(true)
     val hasMoreTransactions: StateFlow<Boolean> = _hasMoreTransactions.asStateFlow()
 
-    private val _lastTransactionDocument = MutableStateFlow<com.google.firebase.firestore.DocumentSnapshot?>(null)
-    val lastTransactionDocument: StateFlow<com.google.firebase.firestore.DocumentSnapshot?> = _lastTransactionDocument.asStateFlow()
+    private val _lastTransactionDocument = MutableStateFlow<DocumentSnapshot?>(null)
+    val lastTransactionDocument: StateFlow<DocumentSnapshot?> = _lastTransactionDocument.asStateFlow()
 
     private val _pendingDeposits = MutableStateFlow<List<PendingDeposit>>(emptyList())
     val pendingDeposits: StateFlow<List<PendingDeposit>> = _pendingDeposits.asStateFlow()
@@ -125,7 +132,7 @@ class WalletViewModel @Inject constructor(
                 .collect { isConnected ->
                     _isOnline.value = isConnected
                     Log.d("WalletViewModel", "Network state changed: $isConnected")
-                    
+
                     // Show offline message if network is lost
                     if (!isConnected) {
                         _error.value = "You are currently offline. Some features may be unavailable."
@@ -134,13 +141,13 @@ class WalletViewModel @Inject constructor(
                         if (_error.value?.contains("offline") == true) {
                             _error.value = null
                         }
-                        
+
                         // Process offline operations when back online
                         processOfflineOperations()
                     }
                 }
         }
-        
+
         // Monitor offline operations
         viewModelScope.launch {
             offlineQueueManager.getPendingOperations()
@@ -175,7 +182,7 @@ class WalletViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
-            
+
             try {
                 val deposit = PendingDeposit(
                     userId = userId,
@@ -187,14 +194,14 @@ class WalletViewModel @Inject constructor(
                     paymentMethod = PaymentMethod.UPI,
                     userCountry = "IN"
                 )
-                
+
                 if (_isOnline.value) {
                     // Online: Try to create deposit directly
                     val result = repository.createPendingDeposit(deposit)
                     result.onSuccess { id ->
                         Log.d("WalletViewModel", "Deposit request created successfully: $id")
                     }.onFailure { e ->
-                        _error.value = "Failed to create deposit request: ${e.message}"
+                        _error.value = "Failed to create deposit request: ${mapExceptionToUserMessage(e)}"
                         Log.e("WalletViewModel", "Failed to create deposit request", e)
                     }
                 } else {
@@ -215,8 +222,8 @@ class WalletViewModel @Inject constructor(
     fun loadWithdrawalRequests(userId: String) {
         viewModelScope.launch {
             repository.getWithdrawalRequests(userId)
-                .catch { e -> 
-                    _error.value = "Failed to load withdrawal requests: ${e.message}"
+                .catch { e ->
+                    _error.value = "Failed to load withdrawal requests: ${mapExceptionToUserMessage(e)}"
                     Log.e("WalletViewModel", "Failed to load withdrawal requests", e)
                 }
                 .collect { _withdrawalRequests.value = it }
@@ -227,7 +234,7 @@ class WalletViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
-            
+
             try {
                 val withdrawal = WithdrawalRequest(
                     userId = userId,
@@ -239,14 +246,14 @@ class WalletViewModel @Inject constructor(
                     accountName = accountName,
                     userCountry = "IN"
                 )
-                
+
                 if (_isOnline.value) {
                     // Online: Try to create withdrawal directly
                     val result = repository.createWithdrawalRequest(withdrawal)
                     result.onSuccess { id ->
                         Log.d("WalletViewModel", "Withdrawal request created successfully: $id")
                     }.onFailure { e ->
-                        _error.value = "Failed to create withdrawal request: ${e.message}"
+                        _error.value = "Failed to create withdrawal request: ${mapExceptionToUserMessage(e)}"
                         Log.e("WalletViewModel", "Failed to create withdrawal request", e)
                     }
                 } else {
@@ -280,50 +287,58 @@ class WalletViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Corrected function to load wallet data and start all listeners.
+     */
     fun loadWalletData(userId: String) {
         if (currentUserId == userId) {
             Log.d("WalletViewModel", "Wallet data already loaded for user $userId")
             return
         }
-        
+
         clearListeners()
         currentUserId = userId
         _isLoading.value = true
         _error.value = null
-        
+
         // Reset pagination state
         _transactions.value = emptyList()
         _hasMoreTransactions.value = true
         _lastTransactionDocument.value = null
         _isLoadingMore.value = false
-        
+
         Log.d("WalletViewModel", "Loading wallet data for user $userId")
-        
+
         val listeners = mutableListOf<kotlinx.coroutines.Job>()
 
-        // Balance updates with error handling
+        // 1. Unified Balance Update Listener (CRITICAL FOR REAL-TIME DISPLAY)
         listeners.add(viewModelScope.launch {
-            repository.getWalletBalance(userId)
-                .catch { e -> 
-                    _error.value = "Failed to load wallet balance: ${e.message}"
-                    Log.e("WalletViewModel", "Wallet balance listener error", e)
+            repository.listenToWalletChanges(userId)
+                .distinctUntilChanged()
+                .catch { e ->
+                    _error.value = "Failed to load wallet balances: ${mapExceptionToUserMessage(e)}"
+                    Log.e("WalletViewModel", "Unified balance listener error", e)
                 }
-                .collect { balance ->
-                    _walletBalance.value = balance
-                    Log.d("WalletViewModel", "Wallet balance updated: $balance")
+                .collect { walletData ->
+                    // These fields are collected by WalletScreen.kt
+                    _walletBalance.value = walletData.balance // Available Balance
+                    _withdrawableBalance.value = walletData.withdrawable
+                    _bonusBalance.value = walletData.bonus
+                    _isLoading.value = false // Set loading false after initial data is received
+                    Log.d("WalletViewModel", "Unified balances updated: Total=${walletData.balance}, Withdrawable=${walletData.withdrawable}, Bonus=${walletData.bonus}")
                 }
         })
 
-        // Load initial transactions with pagination
+        // 2. Load initial transactions with pagination
         listeners.add(viewModelScope.launch {
             loadInitialTransactions(userId)
         })
 
-        // Pending deposits with error handling
+        // 3. Pending deposits with error handling (Real-time stream)
         listeners.add(viewModelScope.launch {
             repository.getPendingDeposits(userId)
-                .catch { e -> 
-                    _error.value = "Failed to load pending deposits: ${e.message}"
+                .catch { e ->
+                    _error.value = "Failed to load pending deposits: ${mapExceptionToUserMessage(e)}"
                     Log.e("WalletViewModel", "Pending deposits listener error", e)
                 }
                 .collect { deposits ->
@@ -332,11 +347,11 @@ class WalletViewModel @Inject constructor(
                 }
         })
 
-        // KYC status monitoring
+        // 4. KYC status monitoring (Real-time stream)
         listeners.add(viewModelScope.launch {
             kycMonitor.monitorKYCStatus(userId)
-                .catch { e -> 
-                    _error.value = "Failed to load KYC status: ${e.message}"
+                .catch { e ->
+                    _error.value = "Failed to load KYC status: ${mapExceptionToUserMessage(e)}"
                     Log.e("WalletViewModel", "KYC status listener error", e)
                 }
                 .collect { kycStatus ->
@@ -346,64 +361,64 @@ class WalletViewModel @Inject constructor(
                 }
         })
 
-        // Withdrawable & bonus balances, and withdrawal requests
-        if (repository is WalletRepositoryImpl) {
-            listeners.add(viewModelScope.launch {
-                repository.getWithdrawableBalance(userId)
-                    .catch { e -> 
-                        _error.value = "Failed to load withdrawable balance: ${e.message}"
-                        Log.e("WalletViewModel", "Withdrawable balance listener error", e)
+        // 🏆 NEW: 5. Tournament Result Monitoring Listener
+        listeners.add(viewModelScope.launch {
+            tournamentResultMonitor.observeKillPrizeAmount(userId) // Use the injected monitor
+                .catch { e ->
+                    _error.value = "Failed to monitor Kill Prize payouts: ${mapExceptionToUserMessage(e)}"
+                    Log.e("WalletViewModel", "Kill Prize monitor error", e)
+                }
+                .collect { killPrizeAmount ->
+                    // Check if amount > 0 and process it.
+                    if (killPrizeAmount > 0.0) {
+                        Log.d("WalletViewModel", "New Kill Prize amount detected: $killPrizeAmount")
+                        processKillPrizePayout(userId, killPrizeAmount)
                     }
-                    .collect { balance ->
-                        _withdrawableBalance.value = balance
-                        Log.d("WalletViewModel", "Withdrawable balance updated: $balance")
-                    }
-            })
-            
-            listeners.add(viewModelScope.launch {
-                repository.getBonusBalance(userId)
-                    .catch { e -> 
-                        _error.value = "Failed to load bonus balance: ${e.message}"
-                        Log.e("WalletViewModel", "Bonus balance listener error", e)
-                    }
-                    .collect { balance ->
-                        _bonusBalance.value = balance
-                        Log.d("WalletViewModel", "Bonus balance updated: $balance")
-                    }
-            })
-            
-            listeners.add(viewModelScope.launch {
-                repository.getWithdrawalRequests(userId)
-                    .catch { e -> 
-                        _error.value = "Failed to load withdrawal requests: ${e.message}"
-                        Log.e("WalletViewModel", "Withdrawal requests listener error", e)
-                    }
-                    .collect { requests ->
-                        _withdrawalRequests.value = requests
-                        Log.d("WalletViewModel", "Withdrawal requests updated: ${requests.size} items")
-                    }
-            })
-        }
+                }
+        })
 
         walletListeners = listeners
-        _isLoading.value = false
     }
+
+    // 🏆 NEW FUNCTION: To process the kill prize payout
+    /**
+     * Handles the payout of a kill prize amount by calling the repository
+     * to atomically increment the user's withdrawable balance.
+     */
+    private fun processKillPrizePayout(userId: String, amount: Double) {
+        viewModelScope.launch {
+            _error.value = null // Clear any general error before the payout
+
+            repository.incrementWithdrawableBalance(userId, amount)
+                .onSuccess {
+                    Log.d("WalletViewModel", "Successfully processed and paid out kill prize of $amount for $userId")
+                    // Acknowledge the result to the monitor to stop it from re-emitting the same amount
+                    tournamentResultMonitor.acknowledgePayout(userId, amount)
+                    // The balance will automatically update due to listener #1 (listenToWalletChanges)
+                }
+                .onFailure { e ->
+                    _error.value = "Failed to process Kill Prize: ${mapExceptionToUserMessage(e)}"
+                    Log.e("WalletViewModel", "Failed to process kill prize payout", e)
+                }
+        }
+    }
+
 
     fun loadMoreTransactions() {
         val userId = currentUserId ?: return
         if (_isLoadingMore.value || !_hasMoreTransactions.value) return
-        
+
         viewModelScope.launch {
             _isLoadingMore.value = true
             _error.value = null
-            
+
             try {
                 val params = PaginationParams(
                     pageSize = 20,
                     lastDocument = _lastTransactionDocument.value,
                     loadMore = true
                 )
-                
+
                 val result = repository.getTransactionsPaginated(userId, params)
                 result.onSuccess { paginationResult ->
                     val currentTransactions = _transactions.value.toMutableList()
@@ -411,7 +426,7 @@ class WalletViewModel @Inject constructor(
                     _transactions.value = currentTransactions
                     _hasMoreTransactions.value = paginationResult.hasMore
                     _lastTransactionDocument.value = paginationResult.lastDocument
-                    
+
                     Log.d("WalletViewModel", "Loaded ${paginationResult.items.size} more transactions. Total: ${currentTransactions.size}, hasMore: ${paginationResult.hasMore}")
                 }.onFailure { e ->
                     _error.value = "Failed to load more transactions: ${mapExceptionToUserMessage(e)}"
@@ -426,6 +441,10 @@ class WalletViewModel @Inject constructor(
         }
     }
 
+    /**
+     * FIX: Added clear logging on success/failure in loadInitialTransactions
+     * to help debug if the repository layer is returning an empty list.
+     */
     private suspend fun loadInitialTransactions(userId: String) {
         try {
             val params = PaginationParams(
@@ -433,106 +452,22 @@ class WalletViewModel @Inject constructor(
                 lastDocument = null,
                 loadMore = false
             )
-            
+
             val result = repository.getTransactionsPaginated(userId, params)
             result.onSuccess { paginationResult ->
                 _transactions.value = paginationResult.items
                 _hasMoreTransactions.value = paginationResult.hasMore
                 _lastTransactionDocument.value = paginationResult.lastDocument
-                
-                Log.d("WalletViewModel", "Initial transactions loaded: ${paginationResult.items.size} items, hasMore: ${paginationResult.hasMore}")
+
+                Log.d("WalletViewModel", "SUCCESS: Initial transactions loaded: ${paginationResult.items.size} items, hasMore: ${paginationResult.hasMore}")
             }.onFailure { e ->
-                _error.value = "Failed to load transactions: ${e.message}"
-                Log.e("WalletViewModel", "Failed to load initial transactions", e)
+                _error.value = "Failed to load transactions: ${mapExceptionToUserMessage(e)}"
+                Log.e("WalletViewModel", "FAILURE: Failed to load initial transactions", e)
             }
         } catch (e: Exception) {
             _error.value = "Failed to load transactions: ${mapExceptionToUserMessage(e)}"
-            Log.e("WalletViewModel", "Error loading initial transactions", e)
+            Log.e("WalletViewModel", "ERROR: Error loading initial transactions", e)
         }
-    }
-
-    private fun setupRealtimeListeners(userId: String) {
-        val listeners = mutableListOf<kotlinx.coroutines.Job>()
-
-        // Balance updates with error handling
-        listeners.add(viewModelScope.launch {
-            repository.getWalletBalance(userId)
-                .catch { e -> 
-                    _error.value = "Failed to load wallet balance: ${e.message}"
-                    Log.e("WalletViewModel", "Wallet balance listener error", e)
-                }
-                .collect { balance ->
-                    _walletBalance.value = balance
-                    Log.d("WalletViewModel", "Wallet balance updated: $balance")
-                }
-        })
-
-        // Transaction history with error handling
-        listeners.add(viewModelScope.launch {
-            repository.getTransactions(userId)
-                .catch { e -> 
-                    _error.value = "Failed to load transactions: ${e.message}"
-                    Log.e("WalletViewModel", "Transactions listener error", e)
-                }
-                .collect { transactions ->
-                    _transactions.value = transactions
-                    Log.d("WalletViewModel", "Transactions updated: ${transactions.size} items")
-                }
-        })
-
-        // Pending deposits with error handling
-        listeners.add(viewModelScope.launch {
-            repository.getPendingDeposits(userId)
-                .catch { e -> 
-                    _error.value = "Failed to load pending deposits: ${e.message}"
-                    Log.e("WalletViewModel", "Pending deposits listener error", e)
-                }
-                .collect { deposits ->
-                    _pendingDeposits.value = deposits
-                    Log.d("WalletViewModel", "Pending deposits updated: ${deposits.size} items")
-                }
-        })
-
-        // Withdrawable & bonus balances, and withdrawal requests
-        if (repository is WalletRepositoryImpl) {
-            listeners.add(viewModelScope.launch {
-                repository.getWithdrawableBalance(userId)
-                    .catch { e -> 
-                        _error.value = "Failed to load withdrawable balance: ${e.message}"
-                        Log.e("WalletViewModel", "Withdrawable balance listener error", e)
-                    }
-                    .collect { balance ->
-                        _withdrawableBalance.value = balance
-                        Log.d("WalletViewModel", "Withdrawable balance updated: $balance")
-                    }
-            })
-            
-            listeners.add(viewModelScope.launch {
-                repository.getBonusBalance(userId)
-                    .catch { e -> 
-                        _error.value = "Failed to load bonus balance: ${e.message}"
-                        Log.e("WalletViewModel", "Bonus balance listener error", e)
-                    }
-                    .collect { balance ->
-                        _bonusBalance.value = balance
-                        Log.d("WalletViewModel", "Bonus balance updated: $balance")
-                    }
-            })
-            
-            listeners.add(viewModelScope.launch {
-                repository.getWithdrawalRequests(userId)
-                    .catch { e -> 
-                        _error.value = "Failed to load withdrawal requests: ${e.message}"
-                        Log.e("WalletViewModel", "Withdrawal requests listener error", e)
-                    }
-                    .collect { requests ->
-                        _withdrawalRequests.value = requests
-                        Log.d("WalletViewModel", "Withdrawal requests updated: ${requests.size} items")
-                    }
-            })
-        }
-
-        walletListeners = listeners
     }
 
     private fun clearListeners() {

@@ -81,7 +81,7 @@ sealed class Screen(val route: String) {
     object TournamentDetails : Screen("tournament_details/{tournamentId}") {
         fun createRoute(tournamentId: String) = "tournament_details/$tournamentId"
     }
-    
+
     // Victory Pass
     object VictoryPass : Screen("victory_pass/{tournamentId}") {
         fun createRoute(tournamentId: String) = "victory_pass/$tournamentId"

@@ -56,7 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource // Import for painterResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -82,7 +82,7 @@ fun MoreScreenUI(navController: NavController, viewModel: MoreViewModel = hiltVi
         Box(modifier = Modifier.fillMaxSize()) {
             // Background Image
             Image(
-                painter = painterResource(id = R.drawable.login_screen), // Replace 'image_background' with the actual name of your image in the drawable folder
+                painter = painterResource(id = R.drawable.login_screen),
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop // Or ContentScale.FillBounds, adjust as needed
@@ -145,7 +145,7 @@ fun MoreScreenUI(navController: NavController, viewModel: MoreViewModel = hiltVi
                         MoreItem(
                             icon = Icons.Outlined.PrivacyTip,
                             title = "KYC Verification",
-                            onClick = { navController.navigate(ScreenRoutes.KycScreen) }
+                            onClick = { navController.navigate(ScreenRoutes.KycScreen) } // Navigates to KycScreen
                         )
                         MoreItem(
                             icon = Icons.Outlined.Language,
