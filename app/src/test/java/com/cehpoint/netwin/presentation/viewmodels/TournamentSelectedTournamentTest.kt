@@ -4,7 +4,6 @@ import androidx.lifecycle.SavedStateHandle
 import com.cehpoint.netwin.data.local.DataStoreManager
 import com.cehpoint.netwin.data.remote.FirebaseManager
 import com.cehpoint.netwin.domain.model.Tournament
-import com.cehpoint.netwin.domain.model.TournamentStatus
 import com.cehpoint.netwin.domain.repository.TournamentRepository
 import com.cehpoint.netwin.domain.repository.UserRepository
 import com.cehpoint.netwin.domain.repository.WalletRepository

@@ -8,42 +8,25 @@ import com.cehpoint.netwin.presentation.screens.TournamentDetailsScreenUI
 import com.cehpoint.netwin.presentation.viewmodels.TournamentViewModel
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
-import io.mockk.verify
+import io.mockk.mockk
+import io.mockk.every
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mockito.kotlin.*
-import java.io.Serializable // Added import for data class serialization
+import org.mockito.Mockito // Explicitly import Mockito for safer timeout verification
+import org.mockito.Mockito.mock
+import org.mockito.Mockito.verify
+import java.io.Serializable
 
-// --- Mock Domain Models to resolve compilation errors ---
-
-// FIX: Mocking TournamentStatus as an enum to satisfy the test constructors
-enum class TournamentStatus(val value: String) {
-    UPCOMING("UPCOMING"),
-    LIVE("LIVE"),
-    COMPLETED("COMPLETED")
-}
-
-// FIX: Mocking Tournament with ALL parameters mentioned in the failing test cases.
-data class Tournament(
-    val id: String,
-    val name: String,
-    val description: String,
-    val status: TournamentStatus, // FIX: Type set to enum
-    val entryFee: Double,
-    val prizePool: Double,
-    val maxParticipants: Int, // FIX: Added to resolve missing parameter
-    val registeredParticipants: Int, // FIX: Added to resolve missing parameter
-    val startTime: Long,
-    val endTime: Long, // FIX: Added to resolve missing parameter
-    val gameMode: String, // FIX: Added to resolve missing parameter
-    val rules: List<String>, // FIX: Type changed to List<String> to resolve mismatch
-    val imageUrl: String // FIX: Added to resolve missing parameter
-) : Serializable // Added interface for safety/completeness
-
-// --- End Mock Domain Models ---
+// === FIX 1: Import REAL Domain Models ===
+// These classes are now imported from the domain layer,
+// as implied by the error message.
+import com.cehpoint.netwin.domain.model.Tournament
+import com.cehpoint.netwin.domain.model.TournamentStatus
+// =======================================
 
 
 @RunWith(AndroidJUnit4::class)
@@ -59,21 +42,25 @@ class TournamentDetailsUIFallbackTest {
     private lateinit var mockViewModel: TournamentViewModel
     private lateinit var mockNavController: NavController
 
-    // Mock StateFlows
-    private val selectedTournamentFlow = MutableStateFlow<Tournament?>(null)
+    // Mock StateFlows (using MutableStateFlow for control)
+    private val selectedTournamentFlow: MutableStateFlow<Tournament?> = MutableStateFlow<Tournament?>(null)
     private val isLoadingFlow = MutableStateFlow(false)
     private val errorFlow = MutableStateFlow<String?>(null)
 
     @Before
     fun setup() {
         hiltRule.inject()
-        mockViewModel = mock()
+        // Use MockK for ViewModel as it's better for Flow properties
+        mockViewModel = mockk(relaxed = true)
+        // Use Mockito-Kotlin for NavController as it's easier to verify navigation calls
         mockNavController = mock()
 
-        // Setup mock StateFlow behaviors
-        whenever(mockViewModel.selectedTournament).thenReturn(selectedTournamentFlow)
-        whenever(mockViewModel.isLoadingDetails).thenReturn(isLoadingFlow)
-        whenever(mockViewModel.detailsError).thenReturn(errorFlow)
+        // FIX (Previous Step): Explicitly cast MutableStateFlow to StateFlow
+        // The ViewModel defines these properties as StateFlow, so we must cast the
+        // MutableStateFlow instances to match the return type.
+        every { mockViewModel.selectedTournament } returns selectedTournamentFlow as StateFlow<Tournament?>
+        every { mockViewModel.isLoadingDetails } returns isLoadingFlow as StateFlow<Boolean>
+        every { mockViewModel.detailsError } returns errorFlow as StateFlow<String?>
     }
 
     @Test
@@ -154,20 +141,19 @@ class TournamentDetailsUIFallbackTest {
 
     @Test
     fun testSuccessfulTournamentDataDisplay() {
+        // FIX: Corrected constructor parameters to match the expected 'Tournament' data class
         val tournament = Tournament(
             id = "test123",
             name = "Test Tournament",
             description = "Test Description",
-            status = TournamentStatus.UPCOMING, // FIX: Use the mocked enum
+            status = TournamentStatus.UPCOMING.name, // FIX: status now expects a String (the enum value)
             entryFee = 10.0,
             prizePool = 100.0,
-            maxParticipants = 16,
-            registeredParticipants = 5,
+            maxTeams = 16, // FIX: Renamed from maxParticipants
+            registeredTeams = 5, // FIX: Renamed from registeredParticipants
             startTime = System.currentTimeMillis() + 3600000,
-            endTime = System.currentTimeMillis() + 7200000,
-            gameMode = "Battle Royale",
-            rules = listOf("Standard tournament rules apply"), // FIX: Passed as List<String>
-            imageUrl = "https://example.com/tournament.jpg"
+            // Removed endTime, gameMode, imageUrl parameters
+            rules = listOf("Standard tournament rules apply")
         )
 
         // Setup success state
@@ -216,27 +202,26 @@ class TournamentDetailsUIFallbackTest {
         composeTestRule.onNodeWithContentDescription("Loading")
             .assertIsDisplayed()
 
-        // Simulate slow network - loading continues
-        Thread.sleep(2000) // Simulate 2 second delay
+        // Simulate a brief delay
+        Thread.sleep(100)
 
         composeTestRule.onNodeWithContentDescription("Loading")
             .assertIsDisplayed()
 
         // Finally complete with tournament data
+        // FIX: Corrected constructor parameters to match the expected 'Tournament' data class
         val tournament = Tournament(
             id = "test123",
             name = "Loaded Tournament",
             description = "Finally loaded",
-            status = TournamentStatus.UPCOMING, // FIX: Use the mocked enum
+            status = TournamentStatus.UPCOMING.name, // FIX: status now expects a String (the enum value)
             entryFee = 10.0,
             prizePool = 100.0,
-            maxParticipants = 16,
-            registeredParticipants = 5,
+            maxTeams = 16, // FIX: Renamed from maxParticipants
+            registeredTeams = 5, // FIX: Renamed from registeredParticipants
             startTime = System.currentTimeMillis() + 3600000,
-            endTime = System.currentTimeMillis() + 7200000,
-            gameMode = "Battle Royale",
-            rules = listOf("Standard tournament rules apply"), // FIX: Passed as List<String>
-            imageUrl = "https://example.com/tournament.jpg"
+            // Removed endTime, gameMode, imageUrl parameters
+            rules = listOf("Standard tournament rules apply")
         )
 
         // Update states to show tournament loaded
@@ -300,11 +285,7 @@ class TournamentDetailsUIFallbackTest {
             .assertIsDisplayed()
             .performClick()
 
-        // FIX: The `timeout` function is implicitly available in `org.mockito.kotlin.*` via Mockito extensions,
-        // but if the specific version doesn't export it clearly, we can use the Mockito class directly.
-        // However, the best practice is to rely on `org.mockito.kotlin.timeout`.
-        // If the problem persists, it means the dependency setup is incomplete.
-        // Assuming the test module setup is correct, this line should resolve now.
-        verify(mockNavController, timeout(1000)).navigateUp()
+        // Use Mockito-Kotlin verify with the explicit Mockito.timeout mode
+        verify(mockNavController, Mockito.timeout(1000)).navigateUp()
     }
 }

@@ -65,4 +65,4 @@ class NetworkStateMonitor @Inject constructor(
             Log.d(TAG, "Network state monitor closed")
         }
     }
-} 
+}

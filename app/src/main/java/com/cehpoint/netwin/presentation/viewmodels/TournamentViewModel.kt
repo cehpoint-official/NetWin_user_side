@@ -8,7 +8,6 @@ import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
 import androidx.lifecycle.SavedStateHandle
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.cehpoint.netwin.BuildConfig
 import com.cehpoint.netwin.data.local.DataStoreManager
@@ -21,7 +20,7 @@ import com.cehpoint.netwin.domain.repository.TournamentRepository
 import com.cehpoint.netwin.domain.repository.UserRepository
 import com.cehpoint.netwin.domain.repository.WalletRepository
 import com.cehpoint.netwin.presentation.events.RegistrationFlowEvent
-import com.cehpoint.netwin.utils.NetworkStateMonitor
+import com.cehpoint.netwin.utils.NetworkStateMonitor // KEEP THIS IMPORT (Assuming this is the correct path for the utility class)
 import com.google.ai.client.generativeai.GenerativeModel
 import com.google.ai.client.generativeai.type.content
 import com.google.firebase.Firebase
@@ -95,6 +94,7 @@ class TournamentViewModel @Inject constructor(
     private val walletRepository: WalletRepository, // INJECTED
     private val dataStoreManager: DataStoreManager,
     private val savedStateHandle: SavedStateHandle,
+    // 🔥 FIX: Use the simple name and rely on the import for Hilt/KSP resolution
     private val networkStateMonitor: NetworkStateMonitor
 ) : BaseViewModel<TournamentState, TournamentEvent>() {
 
@@ -358,6 +358,7 @@ class TournamentViewModel @Inject constructor(
             savedStateHandle[KEY_CURRENT_STEP] = previousStep
             _currentError.value = null
         }
+
     }
 
     fun setStepError(error: String?) {
@@ -378,9 +379,11 @@ class TournamentViewModel @Inject constructor(
 
         when (event) {
             is RegistrationFlowEvent.UpdateData -> {
-                val currentData = _stepData.value
-                val updatedData = event.transform(currentData)
-                savedStateHandle[KEY_STEP_DATA] = updatedData
+                // ✅ CORRECTED: Use 'event.update' instead of 'event.transform'
+                // to match the parameter name in RegistrationFlowEvent.UpdateData.
+                // The explicit cast 'as RegistrationStepData' resolves the SavedStateHandle type safety issue.
+                val updatedData = event.update(_stepData.value)
+                savedStateHandle[KEY_STEP_DATA] = updatedData as RegistrationStepData
                 _currentError.value = null
             }
 

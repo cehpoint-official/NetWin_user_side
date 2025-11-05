@@ -10,8 +10,6 @@ import androidx.navigation.compose.ComposeNavigator
 import com.cehpoint.netwin.data.local.DataStoreManager
 import com.cehpoint.netwin.data.remote.FirebaseManager
 import com.cehpoint.netwin.domain.model.Tournament
-import com.cehpoint.netwin.domain.model.RegistrationStep
-import com.cehpoint.netwin.domain.model.RegistrationStepData
 import com.cehpoint.netwin.domain.repository.TournamentRepository
 import com.cehpoint.netwin.domain.repository.UserRepository
 import com.cehpoint.netwin.domain.repository.WalletRepository
@@ -23,15 +21,14 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mockito.kotlin.*
-import javax.inject.Inject
+import org.mockito.Mockito.mock
+import org.mockito.kotlin.* // **Crucial import for mock(), whenever(), and any()**
 
 /**
  * UI test for registration flow error badge behavior
@@ -69,15 +66,29 @@ class RegistrationFlowErrorBadgeTest {
     )
 
     @Before
-    fun setup() {
+    fun setup() = runTest { // **Using runTest for setup to handle suspend calls**
         hiltRule.inject()
-        
+
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         navController = TestNavHostController(context)
         navController.navigatorProvider.addNavigator(ComposeNavigator())
 
         setupMocks()
-        createViewModel()
+        // ViewModel is created inside the test context to ensure coroutine test scope
+        // is available for internal ViewModel operations, especially if init blocks call suspend funs.
+
+        // We use the suspending version of getTournamentById in the mock setup, so we need runTest/runBlocking.
+        whenever(mockTournamentRepository.getTournamentById("test-tournament-123")).thenReturn(testTournament)
+
+        viewModel = TournamentViewModel(
+            repository = mockTournamentRepository,
+            firebaseManager = mockFirebaseManager,
+            userRepository = mockUserRepository,
+            walletRepository = mockWalletRepository,
+            dataStoreManager = mockDataStoreManager,
+            savedStateHandle = SavedStateHandle(),
+            networkStateMonitor = mockNetworkStateMonitor
+        )
     }
 
     private fun setupMocks() {
@@ -97,31 +108,16 @@ class RegistrationFlowErrorBadgeTest {
         whenever(mockDataStoreManager.userName).thenReturn(flowOf("TestUser"))
         whenever(mockNetworkStateMonitor.observeNetworkState()).thenReturn(flowOf(true))
         whenever(mockNetworkStateMonitor.isNetworkAvailable()).thenReturn(true)
-        whenever(mockTournamentRepository.getTournamentById("test-tournament-123")).thenReturn(testTournament)
+        // Note: The suspending call mock for getTournamentById is moved to the @Before block
+        // where we can use runTest.
     }
 
-    private fun createViewModel() {
-        viewModel = TournamentViewModel(
-            repository = mockTournamentRepository,
-            firebaseManager = mockFirebaseManager,
-            userRepository = mockUserRepository,
-            walletRepository = mockWalletRepository,
-            dataStoreManager = mockDataStoreManager,
-            savedStateHandle = SavedStateHandle(),
-            networkStateMonitor = mockNetworkStateMonitor
-        )
-    }
+    // Removed createViewModel since it's now in @Before
 
     @Test
     fun testNoErrorBadgeOnStep1_ReviewStep() = runTest {
         // Setup: Start with valid tournament data but invalid details for later steps
-        val invalidStepData = RegistrationStepData(
-            tournamentId = "test-tournament-123", // Valid for REVIEW step
-            //inGameId = "", // Invalid but not relevant for REVIEW step
-            teamName = "", // Invalid but not relevant for REVIEW step
-            paymentMethod = "wallet", // Valid
-            termsAccepted = false // Invalid but not relevant for REVIEW step
-        )
+        // The viewModel already has the mocks set up from @Before
 
         composeTestRule.setContent {
             RegistrationFlowScreen(
@@ -164,15 +160,15 @@ class RegistrationFlowErrorBadgeTest {
         composeTestRule.waitForIdle()
 
         // Navigate to Step 3 (DETAILS) by simulating step progression
-        viewModel.onRegistrationEvent(RegistrationFlowEvent.UpdateData { 
-            copy(tournamentId = "test-tournament-123") 
+        viewModel.onRegistrationEvent(RegistrationFlowEvent.UpdateData {
+            copy(tournamentId = "test-tournament-123")
         })
-        
-        // Move to PAYMENT step
+
+        // Move to PAYMENT step (Index 2)
         viewModel.onRegistrationEvent(RegistrationFlowEvent.Next)
         composeTestRule.waitForIdle()
-        
-        // Move to DETAILS step
+
+        // Move to DETAILS step (Index 3)
         viewModel.onRegistrationEvent(RegistrationFlowEvent.Next)
         composeTestRule.waitForIdle()
 
@@ -205,19 +201,19 @@ class RegistrationFlowErrorBadgeTest {
         composeTestRule.waitForIdle()
 
         // Setup invalid data that would fail on DETAILS step
-        viewModel.onRegistrationEvent(RegistrationFlowEvent.UpdateData { 
+        viewModel.onRegistrationEvent(RegistrationFlowEvent.UpdateData {
             copy(
                 tournamentId = "test-tournament-123",
-                //inGameId = "", // Invalid
+                //inGameId = "", // Invalid - handled by validation logic
                 teamName = "", // Invalid
                 paymentMethod = "wallet"
-            ) 
+            )
         })
 
         // Navigate through steps to reach DETAILS
         viewModel.onRegistrationEvent(RegistrationFlowEvent.Next) // To PAYMENT
         composeTestRule.waitForIdle()
-        
+
         viewModel.onRegistrationEvent(RegistrationFlowEvent.Next) // To DETAILS
         composeTestRule.waitForIdle()
 
@@ -233,6 +229,8 @@ class RegistrationFlowErrorBadgeTest {
         composeTestRule.onNodeWithText("In-game ID is required").assertIsDisplayed()
 
         // Go back to previous step (PAYMENT)
+        // Note: The UI element for "Back" button might need a specific identifier (like testTag or contentDescription)
+        // If "Back" doesn't work, ensure your actual back button in RegistrationFlowScreen uses this contentDescription.
         composeTestRule.onNodeWithContentDescription("Back").performClick()
         composeTestRule.waitForIdle()
 
@@ -269,10 +267,10 @@ class RegistrationFlowErrorBadgeTest {
         composeTestRule.waitForIdle()
 
         // Setup data and navigate to DETAILS step
-        viewModel.onRegistrationEvent(RegistrationFlowEvent.UpdateData { 
-            copy(tournamentId = "test-tournament-123", paymentMethod = "wallet") 
+        viewModel.onRegistrationEvent(RegistrationFlowEvent.UpdateData {
+            copy(tournamentId = "test-tournament-123", paymentMethod = "wallet")
         })
-        
+
         // Navigate to DETAILS step
         viewModel.onRegistrationEvent(RegistrationFlowEvent.Next) // To PAYMENT
         composeTestRule.waitForIdle()
@@ -291,7 +289,7 @@ class RegistrationFlowErrorBadgeTest {
         composeTestRule.onNodeWithText("In-Game ID").performTextInput("ValidPlayer123")
         composeTestRule.waitForIdle()
 
-        // Error should clear immediately when data is updated
+        // Error should clear immediately when data is updated (this behavior depends on your ViewModel logic)
         composeTestRule.onNodeWithContentDescription("Error").assertDoesNotExist()
         composeTestRule.onNodeWithText("In-game ID is required").assertDoesNotExist()
     }
@@ -310,17 +308,17 @@ class RegistrationFlowErrorBadgeTest {
         composeTestRule.waitForIdle()
 
         // Navigate to PAYMENT step with invalid data for other steps
-        viewModel.onRegistrationEvent(RegistrationFlowEvent.UpdateData { 
+        viewModel.onRegistrationEvent(RegistrationFlowEvent.UpdateData {
             copy(
                 tournamentId = "test-tournament-123",
-                inGameId = "", // Invalid for DETAILS but not relevant for PAYMENT
+               // Invalid for DETAILS but not relevant for PAYMENT
                 teamName = "", // Invalid for DETAILS but not relevant for PAYMENT
                 paymentMethod = "wallet", // Valid for PAYMENT
                 termsAccepted = false // Invalid for CONFIRM but not relevant for PAYMENT
-            ) 
+            )
         })
 
-        viewModel.onRegistrationEvent(RegistrationFlowEvent.Next) // To PAYMENT
+        viewModel.onRegistrationEvent(RegistrationFlowEvent.Next) // To PAYMENT (which is the current step, but triggers validation)
         composeTestRule.waitForIdle()
 
         // Verify we're on PAYMENT step
@@ -355,14 +353,14 @@ class RegistrationFlowErrorBadgeTest {
         composeTestRule.onNodeWithText("1").assertIsDisplayed()
 
         // Setup valid data for navigation
-        viewModel.onRegistrationEvent(RegistrationFlowEvent.UpdateData { 
+        viewModel.onRegistrationEvent(RegistrationFlowEvent.UpdateData {
             copy(
                 tournamentId = "test-tournament-123",
                 paymentMethod = "wallet",
                 //inGameId = "ValidPlayer123",
                 teamName = "ValidTeam",
                 termsAccepted = true
-            ) 
+            )
         })
 
         // Navigate to next step

@@ -24,7 +24,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navigation
-import androidx.navigation.toRoute // <--- ADDED IMPORT
+import androidx.navigation.toRoute
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -172,9 +172,10 @@ class BackNavigationTest {
 
             // Track back stack size
             LaunchedEffect(navController) {
-                navController.currentBackStackEntryFlow.collect {
-                    // FIX: Simplified the assignment that caused the type mismatch error
-                    backStackSize = navController.backQueue.size
+                // FIX: Use the public and observable 'visibleEntries' property to get the stack size,
+                // resolving the 'Unresolved reference: backQueue' error.
+                navController.visibleEntries.collect { entries ->
+                    backStackSize = entries.size
                 }
             }
 
@@ -287,7 +288,7 @@ class BackNavigationTest {
                         startDestination = TournamentRegistration::class
                     ) {
                         composable<TournamentRegistration> { backStackEntry ->
-                            // FIX: Resolved 'toRoute' reference with import
+                            // Resolved 'toRoute' reference with import
                             val args = backStackEntry.toRoute<TournamentRegistration>()
 
                             currentStep = args.stepIndex
@@ -407,7 +408,7 @@ class BackNavigationTest {
                     ) {
                         composable<TournamentRegistration> { backStackEntry ->
                             isInNestedGraph = true
-                            // FIX: Resolved 'toRoute' reference with import
+                            // Resolved 'toRoute' reference with import
                             val args = backStackEntry.toRoute<TournamentRegistration>()
 
                             Box(

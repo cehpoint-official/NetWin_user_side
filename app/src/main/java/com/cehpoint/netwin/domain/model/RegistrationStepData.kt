@@ -4,16 +4,21 @@ import android.os.Parcel
 import android.os.Parcelable
 import androidx.compose.runtime.Stable
 import kotlinx.serialization.Serializable
+// CORRECTED: Ensure the import points to the correct package
+import com.cehpoint.netwin.domain.model.RegistrationStep
 
 @Stable
 @Serializable
 data class RegistrationStepData(
+// val inGameId: String = "", // This property is not used, but kept as it was in the original code
     val playerIds: List<String> = listOf(""),
     val teamName: String = "",
     val paymentMethod: String = "wallet",
     val termsAccepted: Boolean = false,
-    val tournamentId: String = ""
-) : Parcelable {
+    val tournamentId: String = "",
+    val playerName: String = ""
+)
+    : Parcelable {
 
 
     /**
@@ -110,12 +115,12 @@ data class RegistrationStepData(
                 }
             }
         }
-        
+
         android.util.Log.d("RegistrationStepData", "VALIDATION RESULT: ${if (result == null) "VALID" else "INVALID - '$result'"}")
         android.util.Log.d("RegistrationStepData", "=== validate() DOMAIN LAYER EXIT ===")
         return result
     }
-    
+
     /**
      * Checks if all required fields for a specific step are filled
      * @param step The registration step to check
@@ -124,44 +129,44 @@ data class RegistrationStepData(
     fun isStepComplete(step: RegistrationStep): Boolean {
         return validate(step) == null
     }
-    
+
     /**
      * Validates all steps comprehensively (used for final submission)
      * @return Error message string if any step validation fails, null if all valid
      */
     fun validateAll(): String? {
         android.util.Log.d("RegistrationStepData", "=== validateAll() ENTRY - Comprehensive validation ===")
-        
+
         // Validate all steps in order - return first error found
         val reviewResult = validate(RegistrationStep.REVIEW)
         if (reviewResult != null) {
             android.util.Log.w("RegistrationStepData", "validateAll() FAILED at REVIEW: '$reviewResult'")
             return reviewResult
         }
-        
+
         val paymentResult = validate(RegistrationStep.PAYMENT)
         if (paymentResult != null) {
             android.util.Log.w("RegistrationStepData", "validateAll() FAILED at PAYMENT: '$paymentResult'")
             return paymentResult
         }
-        
+
         val detailsResult = validate(RegistrationStep.DETAILS)
         if (detailsResult != null) {
             android.util.Log.w("RegistrationStepData", "validateAll() FAILED at DETAILS: '$detailsResult'")
             return detailsResult
         }
-        
+
         val confirmResult = validate(RegistrationStep.CONFIRM)
         if (confirmResult != null) {
             android.util.Log.w("RegistrationStepData", "validateAll() FAILED at CONFIRM: '$confirmResult'")
             return confirmResult
         }
-        
+
         android.util.Log.d("RegistrationStepData", "validateAll() PASSED - all steps valid")
         android.util.Log.d("RegistrationStepData", "=== validateAll() EXIT ===")
         return null
     }
-    
+
     /**
      * Checks if the entire registration flow is complete
      * @return true if all steps are valid, false otherwise
@@ -169,7 +174,7 @@ data class RegistrationStepData(
     fun isComplete(): Boolean {
         return validate(RegistrationStep.CONFIRM) == null
     }
-    
+
     /**
      * Helper method to determine if this is a SOLO tournament
      * For now, we'll use a simple heuristic - in the future this should be based on tournament data
@@ -179,12 +184,17 @@ data class RegistrationStepData(
         // TODO: This should be determined from actual tournament data passed to this class
         // For now, we'll make team name optional by default to handle SOLO tournaments
         // In the future, add a tournamentMode field to RegistrationStepData
-        return true // Temporarily treat all tournaments as allowing optional team names
+        // TEMPORARILY SET TO FALSE for team validation to pass for non-solo tournaments,
+        // which matches the BGMI Sunday (SOLO mode) shown in the screenshot, but is safer
+        // to prevent blank teamName for non-solo.
+        // A better fix is to pass the tournament mode, but for immediate fix:
+        return false // Setting to false forces team name check to be skipped if only 1 player ID is present.
+        // For a true SOLO mode, the ViewModel should pass this information.
     }
-    
+
     // Parcelable implementation
     override fun describeContents(): Int = 0
-    
+
     override fun writeToParcel(parcel: Parcel, flags: Int) {
         parcel.writeStringList(playerIds)
         parcel.writeString(teamName)
@@ -205,7 +215,7 @@ data class RegistrationStepData(
                 tournamentId = parcel.readString() ?: ""
             )
         }
-        
+
         override fun newArray(size: Int): Array<RegistrationStepData?> {
             return arrayOfNulls(size)
         }

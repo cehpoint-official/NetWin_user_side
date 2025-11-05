@@ -1,3 +1,5 @@
+// settings.gradle.kts
+
 pluginManagement {
     repositories {
         gradlePluginPortal()
@@ -8,7 +10,7 @@ pluginManagement {
                 includeGroupByRegex("com\\.android.*")
                 includeGroupByRegex("com\\.google.*")
                 includeGroupByRegex("androidx.*")
-                includeGroup("com.google.mlkit") // <--- ⭐️ ADD THIS LINE
+                includeGroup("com.google.mlkit")
             }
         }
         mavenCentral()
@@ -26,3 +28,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "NetWin"
 include(":app")
+// ⭐️ THIS IS THE MISSING LINE THAT FIXES YOUR ERROR
+include(":core:utils")

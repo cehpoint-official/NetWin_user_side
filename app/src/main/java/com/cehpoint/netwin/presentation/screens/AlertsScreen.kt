@@ -1,6 +1,7 @@
 package com.cehpoint.netwin.presentation.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -69,7 +70,10 @@ fun AlertsScreenUI(
             TopAppBar(
                 title = { Text("Alerts", color = Color.White) },
                 actions = {
-                    IconButton(onClick = { /* Mark all as read */ }) {
+                    IconButton(onClick = {
+                        // ** UPDATE 1: Mark all as read action **
+                        viewModel.markAllAsRead()
+                    }) {
                         Icon(Icons.Default.DoneAll, contentDescription = "Mark all as read", tint = Color.Cyan)
                     }
                 },
@@ -110,7 +114,15 @@ fun AlertsScreenUI(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(allAlerts) { alert -> // Use allAlerts
-                            AlertCard(alert)
+                            AlertCard(
+                                alert = alert,
+                                onAlertClick = {
+                                    // ** UPDATE 3: Click handler to mark individual alert as read **
+                                    if (!alert.isRead) {
+                                        viewModel.markAlertAsRead(alert.id)
+                                    }
+                                }
+                            )
                         }
                     }
                 }
@@ -120,10 +132,11 @@ fun AlertsScreenUI(
 }
 
 @Composable
-fun AlertCard(alert: Alert) {
+fun AlertCard(alert: Alert, onAlertClick: () -> Unit) {
     Card(
         modifier = Modifier
-            .fillMaxWidth(), // Removed horizontal padding from here
+            .fillMaxWidth()
+            .clickable(onClick = onAlertClick), // ** UPDATE 2: Add clickable modifier **
         colors = CardDefaults.cardColors(
             containerColor = if (alert.isRead) Color(0xFF23272F) else Color(0xFF2A2A2A)
         )

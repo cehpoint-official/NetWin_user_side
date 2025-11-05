@@ -34,6 +34,7 @@ class MainActivityBackNavigationIntegrationTest {
     @get:Rule
     val hiltRule = HiltAndroidRule(this)
 
+    // NOTE: Replace 'MainActivity' with your actual main activity class if different.
     @get:Rule
     val activityScenarioRule = ActivityScenarioRule(MainActivity::class.java)
 
@@ -46,15 +47,19 @@ class MainActivityBackNavigationIntegrationTest {
     @Before
     fun setup() {
         hiltRule.inject()
+        // Ensure MainActivity exists in the app source code for this rule to pass.
+        // If not, use ActivityScenarioRule(ComponentActivity::class.java) for generic tests.
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         context = ApplicationProvider.getApplicationContext()
     }
+
+    // --- Core Back Navigation Tests ---
 
     @Test
     fun testMainActivitySystemBackBehavior() {
         // Wait for activity to be fully loaded
         Thread.sleep(2000)
-        
+
         activityScenarioRule.scenario.onActivity { activity ->
             assertNotNull("Activity should be created", activity)
             assertEquals("Activity should be resumed", Lifecycle.State.RESUMED, activity.lifecycle.currentState)
@@ -63,12 +68,12 @@ class MainActivityBackNavigationIntegrationTest {
         // Try system back press from main screen - should not crash
         device.pressBack()
         Thread.sleep(1000)
-        
+
         activityScenarioRule.scenario.onActivity { activity ->
             // Activity should still be alive or properly finished
-            assertTrue("Activity state should be valid", 
-                activity.lifecycle.currentState == Lifecycle.State.RESUMED || 
-                activity.lifecycle.currentState == Lifecycle.State.DESTROYED)
+            assertTrue("Activity state should be valid",
+                activity.lifecycle.currentState == Lifecycle.State.RESUMED ||
+                        activity.lifecycle.currentState == Lifecycle.State.DESTROYED)
         }
     }
 
@@ -76,23 +81,24 @@ class MainActivityBackNavigationIntegrationTest {
     fun testNavigationThroughBottomTabsAndBack() {
         // Wait for initial load
         Thread.sleep(3000)
-        
+
         activityScenarioRule.scenario.onActivity { activity ->
             // Try to navigate through bottom tabs if authenticated
             // This simulates real user navigation patterns
+            // (You would add UI interaction here, e.g., composeTestRule.onNodeWithTag("tab_home").performClick())
         }
-        
+
         // Simulate multiple rapid back presses (common user behavior)
         repeat(3) {
             device.pressBack()
             Thread.sleep(200)
         }
-        
+
         // Verify app doesn't crash
         activityScenarioRule.scenario.onActivity { activity ->
             assertTrue("Activity should handle rapid back presses gracefully",
-                activity.lifecycle.currentState == Lifecycle.State.RESUMED || 
-                activity.lifecycle.currentState == Lifecycle.State.DESTROYED)
+                activity.lifecycle.currentState == Lifecycle.State.RESUMED ||
+                        activity.lifecycle.currentState == Lifecycle.State.DESTROYED)
         }
     }
 
@@ -100,84 +106,115 @@ class MainActivityBackNavigationIntegrationTest {
     fun testBackNavigationWithProcessDeath() {
         // Wait for initial setup
         Thread.sleep(2000)
-        
+
         var initialProcessId = 0
         activityScenarioRule.scenario.onActivity { activity ->
             initialProcessId = android.os.Process.myPid()
         }
-        
+
         // Simulate process death by moving to background and killing
         activityScenarioRule.scenario.moveToState(Lifecycle.State.CREATED)
         Thread.sleep(1000)
-        
+
         // Recreate activity (simulates process death recovery)
         activityScenarioRule.scenario.recreate()
         Thread.sleep(2000)
-        
+
         activityScenarioRule.scenario.onActivity { activity ->
             val newProcessId = android.os.Process.myPid()
             // Process might be same or different depending on Android behavior
             assertNotNull("Activity should be recreated successfully", activity)
         }
-        
+
         // Test back navigation after recreation
         device.pressBack()
         Thread.sleep(1000)
-        
+
         activityScenarioRule.scenario.onActivity { activity ->
             // Should handle back press gracefully even after process recreation
             assertTrue("Activity should handle back press after recreation",
-                activity.lifecycle.currentState == Lifecycle.State.RESUMED || 
-                activity.lifecycle.currentState == Lifecycle.State.DESTROYED)
+                activity.lifecycle.currentState == Lifecycle.State.RESUMED ||
+                        activity.lifecycle.currentState == Lifecycle.State.DESTROYED)
         }
     }
+
+    // --- Advanced Stability and Performance Tests ---
 
     @Test
     fun testBackNavigationMemoryLeaks() {
         val initialMemory = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()
-        
+
         // Perform navigation operations that could cause memory leaks
         repeat(10) {
             activityScenarioRule.scenario.onActivity { activity ->
                 // Simulate complex navigation patterns
+                // (Add navigation clicks here)
             }
-            
+
             device.pressBack()
             Thread.sleep(100)
-            
+
             // Force garbage collection to see if there are memory leaks
             System.gc()
             Thread.sleep(100)
         }
-        
+
         val finalMemory = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()
         val memoryIncrease = finalMemory - initialMemory
-        
+
         // Memory should not increase significantly (allowing for some variation)
-        assertTrue("Memory usage should not increase significantly during navigation", 
+        assertTrue("Memory usage should not increase significantly during navigation",
             memoryIncrease < 50 * 1024 * 1024) // 50MB threshold
     }
+
+    @Test
+    fun testBackNavigationPerformanceUnderLoad() {
+        val startTime = System.currentTimeMillis()
+        var navigationCount = 0
+        val maxIterations = 50
+
+        // FIX: Use a labeled 'for' loop instead of 'repeat' to allow 'break' inside the 'catch' block.
+        navigationLoop@ for (iteration in 0 until maxIterations) {
+            try {
+                device.pressBack()
+                navigationCount++
+
+                // Small delay to avoid overwhelming the system
+                Thread.sleep(50)
+
+                // Verify activity is still responsive every 10 iterations
+                if (iteration % 10 == 0) {
+                    activityScenarioRule.scenario.onActivity { activity ->
+                        assertNotNull("Activity should remain responsive under load", activity)
+                    }
+                }
+
+            } catch (e: Exception) {
+                println("Navigation failed at iteration $iteration: ${e.message}")
+                break@navigationLoop // Break out of the labeled loop
+            }
+        }
+
+        val endTime = System.currentTimeMillis()
+        val duration = endTime - startTime
+
+        assertTrue("Navigation performance should be acceptable", duration < 30000) // 30 seconds max
+        assertTrue("Should handle multiple navigation events", navigationCount > 0)
+    }
+
+    // --- Device and System Integration Tests ---
 
     @Test
     fun testBackNavigationAccessibility() {
         // Wait for setup
         Thread.sleep(2000)
-        
-        // Enable accessibility services simulation
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val uiAutomation = instrumentation.uiAutomation
-        
-        try {
-            // Test that back navigation works with accessibility services
-            device.pressBack()
-            Thread.sleep(1000)
-            
-            activityScenarioRule.scenario.onActivity { activity ->
-                assertNotNull("Activity should handle back press with accessibility", activity)
-            }
-            
-        } catch (e: Exception) {
-            fail("Back navigation should work with accessibility features: ${e.message}")
+
+        // Test that back navigation works with accessibility services
+        device.pressBack()
+        Thread.sleep(1000)
+
+        activityScenarioRule.scenario.onActivity { activity ->
+            assertNotNull("Activity should handle back press with accessibility", activity)
         }
     }
 
@@ -186,25 +223,25 @@ class MainActivityBackNavigationIntegrationTest {
         // Test portrait mode
         device.setOrientationNatural()
         Thread.sleep(1000)
-        
+
         device.pressBack()
         Thread.sleep(500)
-        
+
         activityScenarioRule.scenario.onActivity { activity ->
             assertNotNull("Activity should handle back in portrait", activity)
         }
-        
+
         // Test landscape mode
         device.setOrientationLeft()
         Thread.sleep(1000)
-        
+
         device.pressBack()
         Thread.sleep(500)
-        
+
         activityScenarioRule.scenario.onActivity { activity ->
             assertNotNull("Activity should handle back in landscape", activity)
         }
-        
+
         // Return to natural orientation
         device.setOrientationNatural()
         Thread.sleep(500)
@@ -213,30 +250,25 @@ class MainActivityBackNavigationIntegrationTest {
     @Test
     fun testBackNavigationWithDeepLinks() {
         // Create a deep link intent
-        val deepLinkIntent = Intent().apply {
+        val deepLinkIntent = Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
             data = android.net.Uri.parse("netwin://tournament/123")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        
-        try {
-            // Launch with deep link
-            val deepLinkScenario = ActivityScenario.launch<MainActivity>(deepLinkIntent)
-            Thread.sleep(2000)
-            
-            deepLinkScenario.onActivity { activity ->
-                assertNotNull("Deep link activity should be created", activity)
-            }
-            
-            // Test back navigation from deep link
-            device.pressBack()
-            Thread.sleep(1000)
-            
-            deepLinkScenario.close()
-        } catch (e: Exception) {
-            // Deep linking might not be fully implemented, so we log but don't fail
-            println("Deep link test failed (expected if not implemented): ${e.message}")
+
+        // Use a new scenario to launch the deep link
+        val deepLinkScenario = ActivityScenario.launch<MainActivity>(deepLinkIntent)
+        Thread.sleep(2000)
+
+        deepLinkScenario.onActivity { activity ->
+            assertNotNull("Deep link activity should be created", activity)
         }
+
+        // Test back navigation from deep link
+        device.pressBack()
+        Thread.sleep(1000)
+
+        deepLinkScenario.close()
     }
 
     @Test
@@ -244,60 +276,28 @@ class MainActivityBackNavigationIntegrationTest {
         // Test back navigation while system UI is hidden/shown
         activityScenarioRule.scenario.onActivity { activity ->
             // Simulate full screen mode
+            @Suppress("DEPRECATION")
             activity.window.decorView.systemUiVisibility = (
-                android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                or android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
-                or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-            )
+                    android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                            or android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                            or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    )
         }
-        
+
         Thread.sleep(1000)
-        
+
         device.pressBack()
         Thread.sleep(1000)
-        
+
         activityScenarioRule.scenario.onActivity { activity ->
             assertNotNull("Activity should handle back press in fullscreen", activity)
         }
-        
+
         // Restore system UI
         activityScenarioRule.scenario.onActivity { activity ->
+            @Suppress("DEPRECATION")
             activity.window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_VISIBLE
         }
-    }
-
-    @Test
-    fun testBackNavigationPerformanceUnderLoad() {
-        val startTime = System.currentTimeMillis()
-        var navigationCount = 0
-        
-        // Perform navigation under load
-        repeat(50) { iteration ->
-            try {
-                device.pressBack()
-                navigationCount++
-                
-                // Small delay to avoid overwhelming the system
-                Thread.sleep(50)
-                
-                // Verify activity is still responsive every 10 iterations
-                if (iteration % 10 == 0) {
-                    activityScenarioRule.scenario.onActivity { activity ->
-                        assertNotNull("Activity should remain responsive under load", activity)
-                    }
-                }
-                
-            } catch (e: Exception) {
-                println("Navigation failed at iteration $iteration: ${e.message}")
-                break
-            }
-        }
-        
-        val endTime = System.currentTimeMillis()
-        val duration = endTime - startTime
-        
-        assertTrue("Navigation performance should be acceptable", duration < 30000) // 30 seconds max
-        assertTrue("Should handle multiple navigation events", navigationCount > 0)
     }
 
     @Test
@@ -310,21 +310,21 @@ class MainActivityBackNavigationIntegrationTest {
                     data = android.net.Uri.parse("https://example.com")
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 }
-                
+
                 // This might open external browser, so we handle gracefully
                 mainActivity.startActivity(intent)
                 Thread.sleep(2000)
-                
+
                 // Come back with back press
                 device.pressBack()
                 Thread.sleep(1000)
-                
+
             } catch (e: Exception) {
                 // External activity launch might fail in test environment, which is OK
                 println("External activity test failed (expected): ${e.message}")
             }
         }
-        
+
         // Verify main activity is still functional
         activityScenarioRule.scenario.onActivity { activity ->
             assertNotNull("Main activity should be functional after external navigation", activity)
@@ -334,29 +334,29 @@ class MainActivityBackNavigationIntegrationTest {
     @Test
     fun testBackNavigationStateConsistency() {
         var stateCheckCount = 0
-        
+
         // Perform navigation and check state consistency
         repeat(5) {
             device.pressBack()
             Thread.sleep(300)
-            
+
             activityScenarioRule.scenario.onActivity { activity ->
                 stateCheckCount++
-                
+
                 // Verify activity state is consistent
                 assertTrue("Activity lifecycle should be in valid state",
                     activity.lifecycle.currentState == Lifecycle.State.RESUMED ||
-                    activity.lifecycle.currentState == Lifecycle.State.STARTED ||
-                    activity.lifecycle.currentState == Lifecycle.State.DESTROYED)
-                
+                            activity.lifecycle.currentState == Lifecycle.State.STARTED ||
+                            activity.lifecycle.currentState == Lifecycle.State.DESTROYED)
+
                 // If activity is still alive, verify it's functional
                 if (activity.lifecycle.currentState == Lifecycle.State.RESUMED) {
-                    assertNotNull("Activity should maintain references", activity.window)
-                    assertNotNull("Activity should maintain context", activity.baseContext)
+                    assertNotNull("Activity should maintain window reference", activity.window)
+                    assertNotNull("Activity should maintain context reference", activity.baseContext)
                 }
             }
         }
-        
+
         assertTrue("Should have performed state checks", stateCheckCount > 0)
     }
 
@@ -364,19 +364,23 @@ class MainActivityBackNavigationIntegrationTest {
     fun testBackNavigationWithConfigurationChanges() {
         // Test back navigation during configuration changes
         activityScenarioRule.scenario.onActivity { activity ->
-            // Trigger configuration change
-            val config = activity.resources.configuration
-            config.fontScale = 1.5f // Change font scale
+            // Set up a ComposeRule if you need to access composables here
         }
-        
+
+        // Simulate orientation change via UiDevice
+        device.setOrientationLeft()
         Thread.sleep(1000)
-        
+
         // Press back during/after configuration change
         device.pressBack()
         Thread.sleep(1000)
-        
+
         activityScenarioRule.scenario.onActivity { activity ->
             assertNotNull("Activity should handle back press during config changes", activity)
         }
+
+        // Return to natural orientation
+        device.setOrientationNatural()
+        Thread.sleep(500)
     }
 }

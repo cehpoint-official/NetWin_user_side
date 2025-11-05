@@ -197,15 +197,15 @@ fun LegacyTournamentsScreenUI(navController: NavController, viewModel: Tournamen
     val tournamentState = state as? TournamentState ?: TournamentState()
     val isLoading = tournamentState.isLoading
     val error = tournamentState.error
-    val tournaments = tournamentState.tournaments
 
-    Log.d("TournamentsScreen", "Tournament state updated:")
-    Log.d("TournamentsScreen", "Loading: $isLoading")
-    Log.d("TournamentsScreen", "Error: $error")
-    Log.d("TournamentsScreen", "Number of tournaments: ${tournaments.size}")
-    tournaments.forEach { tournament ->
+    // ** MODIFICATION START: Filter out Completed Tournaments **
+    val allTournaments = tournamentState.tournaments
+    val activeTournaments = allTournaments.filter { it.computedStatus != TournamentStatus.COMPLETED }
+    Log.d("TournamentsScreen", "Total tournaments: ${allTournaments.size}, Active tournaments: ${activeTournaments.size}")
+    activeTournaments.forEach { tournament ->
         Log.d("TournamentsScreen", "Tournament in UI: ${tournament.name}, ID: ${tournament.id}, Status: ${tournament.computedStatus}, Mode: ${tournament.mode}, Map: ${tournament.map}")
     }
+    // ** MODIFICATION END: Filter out Completed Tournaments **
 
     LaunchedEffect(registrationState) {
         registrationState?.let { result ->
@@ -245,6 +245,9 @@ fun LegacyTournamentsScreenUI(navController: NavController, viewModel: Tournamen
                 walletBalance = walletBalance.toInt(),
                 currency = userCurrency,
                 isRefreshing = false, // Don't show refresh indicator in top bar
+                // ** The onToggleUi callback is for debugging and does not render a visible button. **
+                // Since you asked to remove the alert button (which doesn't exist here),
+                // I'm keeping the onToggleUi logic as it was, as removing it might break debug functionality.
                 onToggleUi = if (BuildConfig.DEBUG) {
                     {
                         FeatureFlags.runtimeTournamentUiV2 = !FeatureFlags.runtimeTournamentUiV2
@@ -342,7 +345,8 @@ fun LegacyTournamentsScreenUI(navController: NavController, viewModel: Tournamen
                     // Collect the registration status from the ViewModel state
                     val userRegistrations = tournamentState.userRegistrations
 
-                    items(tournaments) { tournament ->
+                    // ** MODIFIED: Use activeTournaments (filtered list) here **
+                    items(activeTournaments) { tournament ->
                         val isUserRegistered = userRegistrations.containsKey(tournament.id)
                         // ⭐ NEW CHECK: Has the user submitted a result for this tournament ID?
                         val isResultSubmitted = submittedTournamentIds.contains(tournament.id)
@@ -553,6 +557,14 @@ fun TournamentsTopBar(
                     strokeWidth = 2.dp
                 )
             }
+            // The 'onToggleUi' debug functionality is not an alert button.
+            // If you wanted to remove it completely, you would remove this whole section:
+            /*
+            if (onToggleUi != null) {
+                Spacer(modifier = Modifier.width(8.dp))
+                // ... debug UI toggle ...
+            }
+            */
         }
 
         Surface(
@@ -657,12 +669,12 @@ fun TournamentCard(
     // Define the exact colors from the screenshot for clarity
     val cardBackgroundColor = Color(0xFF2C2B3E)
     val prizeColor = Color(0xFFFFD600) // Yellowish gold
-    val killColor = Color(0xFF00E5FF)   // Cyan/Blue
-    val feeColor = Color(0xFFFF4D6D)     // Reddish pink
+    val killColor = Color(0xFF00E5FF)// Cyan/Blue
+    val feeColor = Color(0xFFFF4D6D)// Reddish pink
     val gradientColors = listOf(
         Color(0xFF903AE3), // Left - Purple
         Color(0xFFA970B4), // Center - Purple-Pink blend
-        Color(0xFFDD3BA8)  // Right - Pink
+        Color(0xFFDD3BA8)// Right - Pink
     )
     val detailsButtonOutlineColor = Color(0xFF625F83)
     val capacityProgressColor = Color(0xFF00E676) // Bright Green
@@ -804,7 +816,7 @@ fun TournamentCard(
                 }
 
                 // ** ACTION BUTTONS - MODIFIED LOGIC **
-                val showScanButton = tournament.computedStatus == TournamentStatus.ONGOING && isUserRegistered
+                val showScanButton = (tournament.computedStatus == TournamentStatus.ONGOING || tournament.computedStatus == TournamentStatus.ROOM_OPEN) && isUserRegistered
 
                 if (showScanButton || isResultSubmitted) {
                     val buttonText = if (isResultSubmitted) "Result Submitted" else "Scan and Earn"
@@ -859,55 +871,72 @@ fun TournamentCard(
                     }
                 } else {
                     // Scenario 2: Default - Show Details and Register
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                /* Handle Details Click */
-                                navController.navigate(Screen.TournamentDetails.createRoute(tournament.id))
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(50.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.dp, detailsButtonOutlineColor)
-                        ) {
-                            Text("Details", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                        Button(
-                            onClick = {
-                                /* Handle Register Click */
-                                navController.navigate(
-                                    ScreenRoutes.TournamentRegistration(
-                                        tournamentId = tournament.id,
-                                        stepIndex = 1
-                                    )
-                                )
-
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(50.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(), // Remove default padding
-                            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(
-                                        brush = Brush.horizontalGradient(gradientColors),
-                                        shape = RoundedCornerShape(12.dp)
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("Register", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                            }
-                        }
-                    }
+                    // This applies to UPCOMING and STARTS_SOON, or if the user isn't registered for an ONGOING/ROOM_OPEN match
+                    ButtonActionRow(
+                        navController = navController,
+                        tournament = tournament,
+                        gradientColors = gradientColors,
+                        detailsButtonOutlineColor = detailsButtonOutlineColor
+                    )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ButtonActionRow(
+    navController: NavController,
+    tournament: Tournament,
+    gradientColors: List<Color>,
+    detailsButtonOutlineColor: Color
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        OutlinedButton(
+            onClick = {
+                /* Handle Details Click */
+                navController.navigate(Screen.TournamentDetails.createRoute(tournament.id))
+            },
+            modifier = Modifier
+                .weight(1f)
+                .height(50.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White), // Explicit white content color
+            border = BorderStroke(1.dp, detailsButtonOutlineColor)
+        ) {
+            Text("Details", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Button(
+            onClick = {
+                /* Handle Register Click */
+                navController.navigate(
+                    ScreenRoutes.TournamentRegistration(
+                        tournamentId = tournament.id,
+                        stepIndex = 1
+                    )
+                )
+
+            },
+            modifier = Modifier
+                .weight(1f)
+                .height(50.dp),
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(), // Remove default padding
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        brush = Brush.horizontalGradient(gradientColors),
+                        shape = RoundedCornerShape(12.dp)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Register", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
             }
         }
     }
@@ -1007,14 +1036,17 @@ private fun InfoDetail(label: String, value: String, valueColor: Color) {
 
 /**
  * A badge with improved visibility that displays the tournament status.
+ *
+ * **MODIFIED:** Removed COMPLETED status check.
  */
 @Composable
 fun TournamentStatusBadge(status: TournamentStatus, modifier: Modifier = Modifier) {
+    // ** MODIFIED: Removed COMPLETED status as it is filtered from the list in the parent composable **
     val (text, color) = when (status) {
-        TournamentStatus.COMPLETED -> "Completed" to Color(0xFF616161) // Dark Grey
-        TournamentStatus.UPCOMING -> "Upcoming" to Color(0xFFD84315)   // Deep Orange
+        TournamentStatus.COMPLETED -> "Completed" to Color(0xFF616161) // Should not be seen if filtering works
+        TournamentStatus.UPCOMING -> "Upcoming" to Color(0xFFD84315)// Deep Orange
         TournamentStatus.STARTS_SOON -> "Starts Soon" to Color(0xFF0277BD) // Light Blue
-        TournamentStatus.ONGOING -> "Live" to Color(0xFF2E7D32)         // Dark Green
+        TournamentStatus.ONGOING -> "Live" to Color(0xFF2E7D32)// Dark Green
         TournamentStatus.ROOM_OPEN -> "Room Open" to Color(0xFFC62828) // Red
     }
 
@@ -1101,7 +1133,7 @@ fun GradientPrimaryButton(
                         listOf(
                             Color(0xFF903AE3), // Left - Purple
                             Color(0xFFA970B4), // Center - Purple-Pink blend
-                            Color(0xFFDD3BA8)  // Right - Pink
+                            Color(0xFFDD3BA8) // Right - Pink
                         )
                     ),
                     shape = RoundedCornerShape(NetwinTokens.RadiusSm)
@@ -1281,8 +1313,8 @@ fun TournamentCardV2(
                     horizontalArrangement = Arrangement.Start
                 ) {
                     /* Box(modifier = Modifier.scale(0.8f)) { // subtle size reduction for visual balance
-                        DetailsCountdownBadge(targetTimeMillis = t.startTime)
-                    } */
+                         DetailsCountdownBadge(targetTimeMillis = t.startTime)
+                     } */
                 }
             }
             // Subtle divider for hierarchy
@@ -1323,7 +1355,7 @@ fun TournamentCardV2(
 @Preview(showBackground = true, backgroundColor = 0xFF121212)
 @Composable
 private fun Preview_TournamentsTopBar() {
-//    TournamentsTopBar(walletBalance = 1250, currency = "INR", isRefreshing = false, onToggleUi = {}, navController = )
+//    TournamentsTopBar(walletBalance = 1250, currency = "INR", isRefreshing = false, onToggleUi = {}, navController = )
 }
 
 @Preview(showBackground = true, backgroundColor = 0xFF121212)

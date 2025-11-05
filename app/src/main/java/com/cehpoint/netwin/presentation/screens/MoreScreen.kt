@@ -128,12 +128,8 @@ fun MoreScreenUI(navController: NavController, viewModel: MoreViewModel = hiltVi
                             onEditProfile = { navController.navigate(ScreenRoutes.ProfileScreen) }
                         )
 
-                        Spacer(modifier = Modifier.height(24.dp))
-
-                        // Quick Stats
-                        QuickStatsSection(user!!)
-
-                        Spacer(modifier = Modifier.height(24.dp))
+                        // ** REMOVED: Quick Stats Section **
+                        Spacer(modifier = Modifier.height(24.dp)) // Maintain spacing after profile
 
                         // Account & Settings
                         SectionTitle("Account & Settings")
@@ -338,61 +334,9 @@ private fun ProfileSection(
     }
 }
 
-@Composable
-private fun QuickStatsSection(user: User) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly
-    ) {
-        StatItem(
-            icon = Icons.Outlined.EmojiEvents,
-            value = user.tournamentsJoined.toString(),
-            label = "Tournaments"
-        )
-        StatItem(
-            icon = Icons.Outlined.Star,
-            value = user.matchesWon.toString(),
-            label = "Wins"
-        )
-        StatItem(
-            icon = Icons.Outlined.AccountBalanceWallet,
-            value = "₹${user.totalEarnings}",
-            label = "Earnings"
-        )
-    }
-}
+// ** REMOVED QuickStatsSection composable **
 
-@Composable
-private fun StatItem(
-    icon: ImageVector,
-    value: String,
-    label: String
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = Color.Cyan,
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = value,
-            color = Color.White,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            text = label,
-            color = Color.Gray,
-            fontSize = 12.sp
-        )
-    }
-}
+// ** REMOVED StatItem composable **
 
 @Composable
 private fun SectionTitle(title: String) {
