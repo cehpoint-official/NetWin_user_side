@@ -45,9 +45,12 @@ class AuthViewModel @Inject constructor(
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    private val  splashShowFlow = MutableStateFlow(false)
+    private val splashShowFlow = MutableStateFlow(false)
     val isSplashShow = splashShowFlow.asStateFlow()
 
+    // ⭐ NEW STATE FOR EMAIL VERIFICATION FLOW
+    private val _verificationEmailSent = MutableStateFlow(false)
+    val verificationEmailSent: StateFlow<Boolean> = _verificationEmailSent.asStateFlow()
 
 
     fun splashScreen() {
@@ -105,7 +108,7 @@ class AuthViewModel @Inject constructor(
     }
 
     // RegistrationState data class for holding all registration fields and validation
-     data class RegistrationState(
+    data class RegistrationState(
         val step: RegistrationStep = RegistrationStep.Welcome,
         val email: String = "",
         val emailError: String? = null,
@@ -156,16 +159,16 @@ class AuthViewModel @Inject constructor(
         Log.d("AuthViewModel", "Current user display name before init: ${firebaseAuth.currentUser?.displayName}")
         Log.d("AuthViewModel", "Current user phone before init: ${firebaseAuth.currentUser?.phoneNumber}")
         Log.d("AuthViewModel", "Current user is email verified before init: ${firebaseAuth.currentUser?.isEmailVerified}")
-        
+
         // Start splash screen timer
         splashScreen()
-        
+
         // Debug Firebase Auth state
         debugAuthState()
-        
+
         // Initialize authentication state
         initializeAuthState()
-        
+
         // Add auth state listener for real-time updates
         firebaseAuth.addAuthStateListener { auth ->
             Log.d("AuthViewModel", "=== AUTH STATE LISTENER TRIGGERED ===")
@@ -179,12 +182,12 @@ class AuthViewModel @Inject constructor(
             _currentUser.value = auth.currentUser
             _isAuthenticated.value = auth.currentUser != null
             _isAuthStateInitialized.value = true
-            
+
             Log.d("AuthViewModel", "Updated state - isAuthenticated: ${_isAuthenticated.value}")
             Log.d("AuthViewModel", "Updated state - isAuthStateInitialized: ${_isAuthStateInitialized.value}")
             Log.d("AuthViewModel", "Updated state - currentUser: ${_currentUser.value}")
         }
-        
+
         Log.d("AuthViewModel", "=== AuthViewModel INIT COMPLETED ===")
     }
 
@@ -200,14 +203,14 @@ class AuthViewModel @Inject constructor(
                 Log.d("AuthViewModel", "initializeAuthState - User display name: ${currentUser?.displayName}")
                 Log.d("AuthViewModel", "initializeAuthState - User phone: ${currentUser?.phoneNumber}")
                 Log.d("AuthViewModel", "initializeAuthState - User is email verified: ${currentUser?.isEmailVerified}")
-                
+
                 // If user exists, assume they are authenticated initially
                 if (currentUser != null) {
                     Log.d("AuthViewModel", "initializeAuthState - User found, setting authenticated state")
                     _currentUser.value = currentUser
-                        _isAuthenticated.value = true
+                    _isAuthenticated.value = true
                     Log.d("AuthViewModel", "initializeAuthState - User authenticated: ${currentUser.uid}")
-                    
+
                     // Try to refresh token in background, but don't force sign out on failure
                     try {
                         Log.d("AuthViewModel", "initializeAuthState - Attempting token validation")
@@ -228,7 +231,7 @@ class AuthViewModel @Inject constructor(
                     _isAuthenticated.value = false
                     Log.d("AuthViewModel", "initializeAuthState - No user found")
                 }
-                
+
                 _isAuthStateInitialized.value = true
                 Log.d("AuthViewModel", "initializeAuthState - Final state - isAuthenticated: ${_isAuthenticated.value}")
                 Log.d("AuthViewModel", "initializeAuthState - Final state - isAuthStateInitialized: ${_isAuthStateInitialized.value}")
@@ -245,7 +248,7 @@ class AuthViewModel @Inject constructor(
         Log.d("AuthViewModel", "=== SIGN IN ATTEMPT ===")
         Log.d("AuthViewModel", "Email: $email")
         Log.d("AuthViewModel", "Password length: ${password.length}")
-        
+
         _isLoading.value = true
         _error.value = null
         firebaseAuth.signInWithEmailAndPassword(email, password)
@@ -264,7 +267,7 @@ class AuthViewModel @Inject constructor(
                     Log.e("AuthViewModel", "Exception type: ${task.exception?.javaClass?.simpleName}")
                     Log.e("AuthViewModel", "Exception message: ${task.exception?.message}")
                     Log.e("AuthViewModel", "Localized message: ${task.exception?.localizedMessage}")
-                    
+
                     _isAuthenticated.value = false
                     _error.value = task.exception?.localizedMessage ?: "Authentication failed. Please try again."
                     onResult(false)
@@ -272,17 +275,62 @@ class AuthViewModel @Inject constructor(
             }
     }
 
-    fun signUp(email: String, password: String, onResult: (Boolean) -> Unit = {}) {
+    // ⭐ MODIFIED SIGN UP FUNCTION: Now accepts countryCode and phoneNumber
+    fun signUp(email: String, password: String, countryCode: String, phoneNumber: String, onResult: (Boolean) -> Unit = {}) {
+        Log.d("AuthViewModel", "=== SIGN UP ATTEMPT ===")
+        Log.d("AuthViewModel", "Phone: $countryCode$phoneNumber")
+
         _isLoading.value = true
         _error.value = null
+        _verificationEmailSent.value = false // Reset state
+
         firebaseAuth.createUserWithEmailAndPassword(email, password)
             .addOnCompleteListener { task ->
-                _isLoading.value = false
                 if (task.isSuccessful) {
-                    _isAuthenticated.value = true
-                    _currentUser.value = firebaseAuth.currentUser
-                    onResult(true)
+                    val user = firebaseAuth.currentUser
+                    // ⭐ STEP 1: Save User Data to Firestore
+                    user?.uid?.let { uid ->
+                        viewModelScope.launch {
+                            try {
+                                val fullPhoneNumber = countryCode + phoneNumber
+                                val userProfile = hashMapOf(
+                                    "id" to uid,
+                                    "email" to email,
+                                    "phone" to fullPhoneNumber,
+                                    "isEmailVerified" to false,
+                                    "createdAt" to com.google.firebase.Timestamp.now()
+                                    // Add other default fields here (e.g., username, profilePictureUrl, etc. if needed)
+                                )
+                                FirebaseFirestore.getInstance().collection("users").document(uid).set(userProfile).await()
+                                Log.d("AuthViewModel", "User profile saved to Firestore for $uid")
+
+                            } catch (e: Exception) {
+                                Log.e("AuthViewModel", "Failed to save user profile to Firestore: ${e.message}")
+                                // Consider what to do if Firestore fails but Auth succeeds (e.g., delete Auth user or flag for retry)
+                            }
+                        }
+                    }
+
+                    // ⭐ STEP 2: Send verification link
+                    user?.sendEmailVerification()
+                        ?.addOnCompleteListener { emailTask ->
+                            _isLoading.value = false
+                            if (emailTask.isSuccessful) {
+                                Log.d("AuthViewModel", "Sign up successful. Verification email sent.")
+                                // Set the flag to true to trigger navigation to VerificationPendingScreen
+                                _verificationEmailSent.value = true
+                                onResult(true)
+                            } else {
+                                Log.e("AuthViewModel", "Failed to send verification email: ${emailTask.exception?.message}")
+                                // Handle failure to send email: The Auth user is created, but verification failed.
+                                // We keep the user but flag an error so the UI can prompt for resend.
+                                _error.value = "Account created, but failed to send verification email. Please sign in to resend."
+                                onResult(false)
+                            }
+                        }
                 } else {
+                    _isLoading.value = false
+                    Log.e("AuthViewModel", "Sign up failed: ${task.exception?.message}")
                     _isAuthenticated.value = false
                     _error.value = task.exception?.localizedMessage ?: "Failed to create account. Please try again."
                     onResult(false)
@@ -290,25 +338,75 @@ class AuthViewModel @Inject constructor(
             }
     }
 
+    // ⭐ NEW FUNCTION: Reload the FirebaseUser object
+    fun reloadUser() {
+        Log.d("AuthViewModel", "=== RELOAD USER STATUS ATTEMPT ===")
+        val user = firebaseAuth.currentUser
+        if (user != null) {
+            _isLoading.value = true
+            user.reload()
+                .addOnCompleteListener { task ->
+                    _isLoading.value = false
+                    if (task.isSuccessful) {
+                        val reloadedUser = firebaseAuth.currentUser
+                        _currentUser.value = reloadedUser
+                        Log.d("AuthViewModel", "User status reloaded. Is verified: ${reloadedUser?.isEmailVerified}")
+
+                        if (reloadedUser?.isEmailVerified == true) {
+                            Log.d("AuthViewModel", "User is verified. Setting isAuthenticated=true.")
+                            _isAuthenticated.value = true // Final state for verified user
+                        }
+                    } else {
+                        Log.e("AuthViewModel", "Failed to reload user status: ${task.exception?.message}")
+                        _error.value = "Failed to check verification status."
+                    }
+                }
+        } else {
+            Log.w("AuthViewModel", "Cannot reload user status: Current user is null.")
+            _isAuthenticated.value = false
+        }
+    }
+
+    // ⭐ NEW FUNCTION: Resends the verification email (For VerificationPendingScreen backup button)
+    fun resendVerificationEmail() {
+        val user = firebaseAuth.currentUser
+        if (user != null) {
+            _isLoading.value = true
+            user.sendEmailVerification()
+                .addOnCompleteListener { task ->
+                    _isLoading.value = false
+                    if (task.isSuccessful) {
+                        _error.value = "Verification email resent successfully! Check your inbox."
+                    } else {
+                        _error.value = task.exception?.localizedMessage ?: "Failed to resend email."
+                    }
+                }
+        } else {
+            _error.value = "User not logged in or session expired."
+        }
+    }
+
+
     fun signOut() {
         Log.d("AuthViewModel", "=== SIGN OUT STARTED ===")
         viewModelScope.launch {
             try {
                 Log.d("AuthViewModel", "Sign out - Current user: ${_currentUser.value}")
-                
+
                 // Sign out from Firebase Auth
                 firebaseAuth.signOut()
-                
+
                 // Clear user data from DataStore
                 clearUserDataFromDataStore()
-                
+
                 // Update state
                 _currentUser.value = null
                 _isAuthenticated.value = false
                 _error.value = null
+                _verificationEmailSent.value = false // Reset verification state
 
                 Log.d("AuthViewModel", "Sign out - User signed out and data cleared from DataStore")
-                
+
             } catch (e: Exception) {
                 Log.e("AuthViewModel", "Sign out - Error", e)
                 _error.value = e.message ?: "Sign out failed"
@@ -322,7 +420,8 @@ class AuthViewModel @Inject constructor(
 
     // Method to check if user is authenticated and profile is complete
     fun isUserFullyAuthenticated(): Boolean {
-        return _isAuthenticated.value && _currentUser.value != null
+        // Updated check: must be authenticated AND email must be verified to proceed past verification screen
+        return _isAuthenticated.value && _currentUser.value != null && (_currentUser.value?.isEmailVerified ?: false)
     }
 
     // 4. Add onStepChange and field update functions
@@ -397,7 +496,11 @@ class AuthViewModel @Inject constructor(
     fun sendOtp(activity: Activity) {
         val phone = _registrationState.value.phone
         val country = _registrationState.value.country
-        val phoneNumber = if (country == "IN") "+91$phone" else "+234$phone"
+        // NOTE: This logic assumes 'phone' is just the local number and 'country' is used to determine the prefix.
+        // The calling composable needs to provide the country code and number correctly.
+        // For multi-step registration, the logic to form the full E.164 phone number from 'country' and 'phone' needs careful review.
+        val phoneNumber = if (country == "IN") "+91$phone" else "+234$phone" // Simplified for example
+
         val options = PhoneAuthOptions.newBuilder(FirebaseAuth.getInstance())
             .setPhoneNumber(phoneNumber)
             .setTimeout(60L, TimeUnit.SECONDS)
@@ -466,7 +569,7 @@ class AuthViewModel @Inject constructor(
                     "displayName" to state.displayName,
                     "country" to state.country,
                     "currency" to if (state.country == "IN") "INR" else "NGN",
-                    "phone" to state.phone,
+                    "phone" to state.country + state.phone, // ⭐ Combined Phone Number
                     "profilePictureUrl" to (profilePictureUrl ?: state.profilePictureUri ?: ""),
                     "kycStatus" to "pending",
                     "createdAt" to com.google.firebase.Timestamp.now()
@@ -554,7 +657,7 @@ class AuthViewModel @Inject constructor(
         Log.d("AuthViewModel", "Current user provider data: ${firebaseAuth.currentUser?.providerData}")
         Log.d("AuthViewModel", "Current user tenant ID: ${firebaseAuth.currentUser?.tenantId}")
         Log.d("AuthViewModel", "Current user is anonymous: ${firebaseAuth.currentUser?.isAnonymous}")
-        
+
         // Check if user has any tokens
         firebaseAuth.currentUser?.let { user ->
             user.getIdToken(false).addOnSuccessListener { tokenResult ->
@@ -564,7 +667,7 @@ class AuthViewModel @Inject constructor(
                 Log.d("AuthViewModel", "Failed to get ID token: ${e.message}")
             }
         }
-        
+
         Log.d("AuthViewModel", "=== END DEBUG AUTH STATE ===")
     }
 
@@ -576,17 +679,17 @@ class AuthViewModel @Inject constructor(
                 val currentUser = firebaseAuth.currentUser
                 Log.d("AuthViewModel", "Recheck - Current user: $currentUser")
                 Log.d("AuthViewModel", "Recheck - User UID: ${currentUser?.uid}")
-                
+
                 if (currentUser != null) {
                     Log.d("AuthViewModel", "Recheck - User found, updating state")
                     _currentUser.value = currentUser
-                                    _isAuthenticated.value = true
+                    _isAuthenticated.value = true
                 } else {
                     Log.d("AuthViewModel", "Recheck - No user found")
                     _currentUser.value = null
-                                    _isAuthenticated.value = false
-                                }
-                
+                    _isAuthenticated.value = false
+                }
+
                 _isAuthStateInitialized.value = true
                 Log.d("AuthViewModel", "Recheck - Final state - isAuthenticated: ${_isAuthenticated.value}")
                 Log.d("AuthViewModel", "=== RECHECK AUTH STATE COMPLETED ===")
@@ -604,7 +707,7 @@ class AuthViewModel @Inject constructor(
                 // Check current state
                 val currentUser = firebaseAuth.currentUser
                 Log.d("AuthViewModel", "Test - Current user before test: $currentUser")
-                
+
                 if (currentUser != null) {
                     Log.d("AuthViewModel", "Test - User already exists, testing token refresh")
                     try {
@@ -617,7 +720,7 @@ class AuthViewModel @Inject constructor(
                 } else {
                     Log.d("AuthViewModel", "Test - No current user, cannot test persistence")
                 }
-                
+
                 Log.d("AuthViewModel", "=== TEST AUTH PERSISTENCE COMPLETED ===")
             } catch (e: Exception) {
                 Log.e("AuthViewModel", "Test - Error testing auth persistence", e)
@@ -632,32 +735,32 @@ class AuthViewModel @Inject constructor(
             try {
                 val currentUser = firebaseAuth.currentUser
                 Log.d("AuthViewModel", "Check restore - Current user: $currentUser")
-                
+
                 if (currentUser != null) {
                     Log.d("AuthViewModel", "Check restore - Found user in Firebase Auth: ${currentUser.uid}")
                     Log.d("AuthViewModel", "Check restore - User email: ${currentUser.email}")
                     Log.d("AuthViewModel", "Check restore - User display name: ${currentUser.displayName}")
-                    
+
                     // Save user data to DataStore
                     saveUserDataToDataStore(currentUser)
-                    
+
                     // Try to get a fresh token to verify the session is still valid
                     try {
                         val tokenResult = currentUser.getIdToken(false).await() // Don't force refresh
                         Log.d("AuthViewModel", "Check restore - Token obtained successfully")
                         Log.d("AuthViewModel", "Check restore - Token: ${tokenResult.token?.take(20)}...")
-                        
+
                         // Update the state with the current user
                         _currentUser.value = currentUser
                         _isAuthenticated.value = true
                         _isAuthStateInitialized.value = true
-                        
+
                         Log.d("AuthViewModel", "Check restore - User session restored successfully")
-                        
+
                     } catch (tokenException: Exception) {
                         Log.e("AuthViewModel", "Check restore - Failed to get token", tokenException)
                         Log.d("AuthViewModel", "Check restore - Token is invalid, user needs to re-authenticate")
-                        
+
                         // Token is invalid, sign out the user
                         firebaseAuth.signOut()
                         clearUserDataFromDataStore()
@@ -667,49 +770,49 @@ class AuthViewModel @Inject constructor(
                     }
                 } else {
                     Log.d("AuthViewModel", "Check restore - No user found in Firebase Auth, checking DataStore")
-                    
+
                     // Check DataStore for user data
                     val storedUserId = dataStoreManager.userId.first()
                     val storedUserToken = dataStoreManager.userToken.first()
                     val storedUserEmail = dataStoreManager.userEmail.first()
-                    
+
                     Log.d("AuthViewModel", "Check restore - Stored user ID: $storedUserId")
                     Log.d("AuthViewModel", "Check restore - Stored user token: ${storedUserToken.take(20)}...")
-                    
+
                     if (storedUserId.isNotEmpty() && storedUserToken.isNotEmpty()) {
                         Log.d("AuthViewModel", "Check restore - Found user data in DataStore")
                         Log.d("AuthViewModel", "Check restore - User data exists but Firebase Auth session is lost")
                         Log.d("AuthViewModel", "Check restore - This indicates a session persistence issue")
-                        
+
                         // Don't clear DataStore data immediately - let the user try to restore
                         // We'll keep the DataStore data and let the user attempt to restore their session
                         // This way, if they have a valid token, they can still access the app
-                        
+
                         // For now, we'll set the user as authenticated based on DataStore data
                         // This is a temporary solution until we implement proper token validation
                         Log.d("AuthViewModel", "Check restore - Setting user as authenticated based on DataStore data")
-                        
+
                         // Create a minimal user object from DataStore data
                         val storedUserName = dataStoreManager.userName.first()
-                        
+
                         // Note: This is a workaround. In a production app, you should validate the token
                         // and potentially implement a refresh token mechanism
                         _currentUser.value = null // We don't have a FirebaseUser object
                         _isAuthenticated.value = true // But we have valid DataStore data
                         _isAuthStateInitialized.value = true
-                        
+
                         Log.d("AuthViewModel", "Check restore - User authenticated from DataStore data")
                         Log.d("AuthViewModel", "Check restore - Note: Firebase Auth session needs to be restored")
-                        
+
                     } else {
                         Log.d("AuthViewModel", "Check restore - No user data found in DataStore")
                         _currentUser.value = null
                         _isAuthenticated.value = false
                         _isAuthStateInitialized.value = true
                     }
-                    
+
                 }
-                
+
             } catch (e: Exception) {
                 Log.e("AuthViewModel", "Check restore - Error checking user session", e)
                 _currentUser.value = null
@@ -726,28 +829,28 @@ class AuthViewModel @Inject constructor(
             try {
                 val currentUser = firebaseAuth.currentUser
                 Log.d("AuthViewModel", "Check session - Current user: $currentUser")
-                
+
                 if (currentUser != null) {
                     Log.d("AuthViewModel", "Check session - Found user: ${currentUser.uid}")
                     Log.d("AuthViewModel", "Check session - User email: ${currentUser.email}")
                     Log.d("AuthViewModel", "Check session - User display name: ${currentUser.displayName}")
-                    
+
                     // Check if user session is still valid
                     try {
                         val tokenResult = currentUser.getIdToken(false).await()
                         Log.d("AuthViewModel", "Check session - Token obtained successfully")
                         Log.d("AuthViewModel", "Check session - Token: ${tokenResult.token?.take(20)}...")
-                        
+
                         // Update the state with the current user
                         _currentUser.value = currentUser
                         _isAuthenticated.value = true
                         _isAuthStateInitialized.value = true
-                        
+
                         Log.d("AuthViewModel", "Check session - User session maintained")
                     } catch (e: Exception) {
                         Log.e("AuthViewModel", "Check session - Failed to get token", e)
                         Log.d("AuthViewModel", "Check session - Token is invalid, user needs to re-authenticate")
-                        
+
                         // Token is invalid, sign out the user
                         firebaseAuth.signOut()
                         _currentUser.value = null
@@ -782,32 +885,32 @@ class AuthViewModel @Inject constructor(
             try {
                 val currentUser = firebaseAuth.currentUser
                 Log.d("AuthViewModel", "Check token storage - Current user: $currentUser")
-                
+
                 if (currentUser != null) {
                     Log.d("AuthViewModel", "Check token storage - Found user: ${currentUser.uid}")
-                    
+
                     // Check if we can get a token (this tests local storage)
                     try {
                         val tokenResult = currentUser.getIdToken(false).await() // Don't force refresh
                         Log.d("AuthViewModel", "Check token storage - Token obtained from storage: ${tokenResult.token?.take(20)}...")
                         Log.d("AuthViewModel", "Check token storage - Token claims: ${tokenResult.claims}")
                         Log.d("AuthViewModel", "Check token storage - Token expiration: ${tokenResult.expirationTimestamp}")
-                        
+
                         // Check if token is expired
                         val currentTime = System.currentTimeMillis() / 1000
                         val tokenExpiration = tokenResult.expirationTimestamp
                         val isExpired = tokenExpiration < currentTime
-                        
+
                         Log.d("AuthViewModel", "Check token storage - Current time: $currentTime")
                         Log.d("AuthViewModel", "Check token storage - Token expiration: $tokenExpiration")
                         Log.d("AuthViewModel", "Check token storage - Token is expired: $isExpired")
-                        
+
                         if (isExpired) {
                             Log.w("AuthViewModel", "Check token storage - Token is expired, user needs to re-authenticate")
                         } else {
                             Log.d("AuthViewModel", "Check token storage - Token is valid")
                         }
-                        
+
                     } catch (e: Exception) {
                         Log.e("AuthViewModel", "Check token storage - Failed to get token from storage", e)
                         Log.d("AuthViewModel", "Check token storage - This indicates token is not stored locally")
@@ -815,7 +918,7 @@ class AuthViewModel @Inject constructor(
                 } else {
                     Log.d("AuthViewModel", "Check token storage - No user found, no tokens to check")
                 }
-                
+
             } catch (e: Exception) {
                 Log.e("AuthViewModel", "Check token storage - Error checking token storage", e)
             }
@@ -836,7 +939,7 @@ class AuthViewModel @Inject constructor(
                 Log.d("AuthViewModel", "Save DataStore - User email: ${user.email}")
                 Log.d("AuthViewModel", "Save DataStore - User display name: ${user.displayName}")
                 Log.d("AuthViewModel", "Save DataStore - User phone: ${user.phoneNumber}")
-                
+
                 // Save user data to DataStore
                 dataStoreManager.setUserId(user.uid)
                 dataStoreManager.setUserEmail(user.email ?: "")
@@ -848,7 +951,7 @@ class AuthViewModel @Inject constructor(
                 dataStoreManager.setUserCreatedAt(user.metadata?.creationTimestamp?.toString() ?: "")
                 dataStoreManager.setUserUpdatedAt(user.metadata?.lastSignInTimestamp?.toString() ?: "")
                 dataStoreManager.setUserLastLogin(user.metadata?.lastSignInTimestamp?.toString() ?: "")
-                
+
                 // Get and save the token
                 try {
                     val tokenResult = user.getIdToken(false).await()
@@ -857,9 +960,9 @@ class AuthViewModel @Inject constructor(
                 } catch (e: Exception) {
                     Log.e("AuthViewModel", "Save DataStore - Failed to get token", e)
                 }
-                
+
                 Log.d("AuthViewModel", "Save DataStore - User data saved successfully")
-                
+
             } catch (e: Exception) {
                 Log.e("AuthViewModel", "Save DataStore - Error saving user data", e)
             }
@@ -882,9 +985,9 @@ class AuthViewModel @Inject constructor(
                 dataStoreManager.setUserCreatedAt("")
                 dataStoreManager.setUserUpdatedAt("")
                 dataStoreManager.setUserLastLogin("")
-                
+
                 Log.d("AuthViewModel", "Clear DataStore - User data cleared successfully")
-                
+
             } catch (e: Exception) {
                 Log.e("AuthViewModel", "Clear DataStore - Error clearing user data", e)
             }
@@ -897,8 +1000,8 @@ class AuthViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 // Use the debug method from DataStoreManager
-                dataStoreManager.debugDataStoreData()
-                
+                // dataStoreManager.debugDataStoreData() // Assuming this is defined in DataStoreManager
+
                 // Also check individual values for comparison
                 val userId = dataStoreManager.userId.first()
                 val userEmail = dataStoreManager.userEmail.first()
@@ -906,23 +1009,23 @@ class AuthViewModel @Inject constructor(
                 val userToken = dataStoreManager.userToken.first()
                 val userRole = dataStoreManager.userRole.first()
                 val userStatus = dataStoreManager.userStatus.first()
-                
+
                 Log.d("AuthViewModel", "Check DataStore - User ID: $userId")
                 Log.d("AuthViewModel", "Check DataStore - User email: $userEmail")
                 Log.d("AuthViewModel", "Check DataStore - User name: $userName")
                 Log.d("AuthViewModel", "Check DataStore - User token: ${userToken.take(20)}...")
                 Log.d("AuthViewModel", "Check DataStore - User role: $userRole")
                 Log.d("AuthViewModel", "Check DataStore - User status: $userStatus")
-                
+
                 val hasDataStoreData = userId.isNotEmpty() && userToken.isNotEmpty()
                 Log.d("AuthViewModel", "Check DataStore - Has user data: $hasDataStoreData")
-                
+
                 // Check if this should affect authentication state
                 if (hasDataStoreData && !_isAuthenticated.value) {
                     Log.d("AuthViewModel", "Check DataStore - Found DataStore data but user not authenticated, considering session restore")
                     _isAuthStateInitialized.value = true
                 }
-                
+
             } catch (e: Exception) {
                 Log.e("AuthViewModel", "Check DataStore - Error checking DataStore data", e)
             }
@@ -948,7 +1051,9 @@ class AuthViewModel @Inject constructor(
 
     fun createTestUser() {
         Log.d("AuthViewModel", "=== CREATING TEST USER ===")
-        signUp("test@example.com", "testpassword123") { success ->
+        // Note: For testing the verification flow, the test user will need manual verification in Firebase Console
+        // Updated call with dummy phone data
+        signUp("test@example.com", "testpassword123", "+91", "9876543210") { success ->
             if (success) {
                 Log.d("AuthViewModel", "Test user created successfully")
             } else {
@@ -959,6 +1064,7 @@ class AuthViewModel @Inject constructor(
 
     fun testSignIn() {
         Log.d("AuthViewModel", "=== TESTING SIGN IN ===")
+        // Note: Sign in requires a verified user to proceed fully
         signIn("test@example.com", "testpassword123") { success ->
             if (success) {
                 Log.d("AuthViewModel", "Test sign in successful")
@@ -967,4 +1073,4 @@ class AuthViewModel @Inject constructor(
             }
         }
     }
-} 
+}

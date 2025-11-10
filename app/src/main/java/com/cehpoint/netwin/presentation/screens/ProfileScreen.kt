@@ -1,85 +1,30 @@
 package com.cehpoint.netwin.presentation.screens
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.CalendarToday
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.EmojiEvents
-import androidx.compose.material.icons.filled.Gamepad
-import androidx.compose.material.icons.filled.MonetizationOn
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.VerifiedUser
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.*
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
-import com.cehpoint.netwin.presentation.navigation.ScreenRoutes
+import com.cehpoint.netwin.R
 import com.cehpoint.netwin.presentation.viewmodels.ProfileViewModel
 import kotlinx.coroutines.launch
 
@@ -96,93 +41,116 @@ fun ProfileScreenUI(
     var newName by remember { mutableStateOf("") }
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
-    val context = LocalContext.current
 
     Scaffold(
         topBar = {
             TopAppBar(
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White
-                        )
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
                     }
                 },
-                title = { Text("Profile", color = Color.White, style = MaterialTheme.typography.headlineSmall) },
-                actions = {
-                    IconButton(onClick = { navController.navigate(ScreenRoutes.SettingsScreen) }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White)
-                    }
+                title = {
+                    Text(
+                        "Profile",
+                        color = Color.White,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xCC181A20)),
-                modifier = Modifier.shadow(4.dp)
+                modifier = Modifier.shadow(8.dp)
             )
         },
-        containerColor = Color(0xFF121212),
+        containerColor = Color.Transparent,
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { paddingValues ->
-        when {
-            isLoading -> {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(color = Color.Cyan)
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Background image
+            Image(
+                painter = painterResource(id = R.drawable.login_screen),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+
+            // Dark overlay
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.65f))
+            )
+
+            when {
+                isLoading -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(color = Color.Cyan)
+                    }
                 }
-            }
-            error != null -> {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("Error: $error", color = Color.Red, modifier = Modifier.padding(16.dp))
+
+                error != null -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Error: $error", color = Color.Red)
+                    }
                 }
-            }
-            user != null -> {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0xFF121212))
-                        .padding(paddingValues),
-                    contentPadding = PaddingValues(bottom = 80.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    item {
-                        // Profile Header Card
+
+                user != null -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(paddingValues)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 20.dp, vertical = 20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        // Profile Card
                         Card(
                             modifier = Modifier
-                                .padding(horizontal = 16.dp, vertical = 12.dp)
-                                .fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF181A20))
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
+                            shape = RoundedCornerShape(24.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = Color(0xFF1E1E1E).copy(alpha = 0.9f)
+                            )
                         ) {
                             Column(
-                                modifier = Modifier.padding(24.dp),
+                                modifier = Modifier.padding(horizontal = 24.dp, vertical = 28.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                // Profile Picture with Gradient Border and Camera FAB
-                                Box(contentAlignment = Alignment.BottomEnd, modifier = Modifier.wrapContentSize()) {
+                                // Profile Image
+                                Box(contentAlignment = Alignment.BottomEnd) {
                                     GradientProfilePicture(
                                         imageUrl = user!!.profilePictureUrl,
-                                        size = 96.dp,
+                                        size = 110.dp,
                                         contentDescription = "Profile picture of ${user!!.displayName}",
-                                        onClick = { /* TODO: Show image picker/camera dialog */ }
+                                        onClick = { /* Add image picker */ }
                                     )
                                     FloatingActionButton(
-                                        onClick = { /* TODO: Show image picker/camera dialog */ },
-                                        containerColor = Color(0xFF181A20),
+                                        onClick = { /* Add image picker */ },
+                                        containerColor = Color(0xFF1E1E1E),
                                         contentColor = Color.Cyan,
                                         modifier = Modifier
-                                            .size(32.dp)
-                                            .semantics { contentDescription = "Change profile picture" }
+                                            .size(36.dp)
+                                            .offset(y = (-6).dp)
                                     ) {
-                                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Icon(
+                                            Icons.Default.Edit,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp)
+                                        )
                                     }
                                 }
-                                Spacer(Modifier.height(16.dp))
-                                // Name (editable)
+
+                                Spacer(modifier = Modifier.height(22.dp))
+
+                                // Name Field
                                 AnimatedNameField(
                                     name = user!!.displayName,
                                     editMode = editName,
@@ -203,61 +171,38 @@ fun ProfileScreenUI(
                                     },
                                     onCancel = { editName = false }
                                 )
-                                // Username
+
                                 if (user!!.username.isNotBlank()) {
                                     Text(
                                         text = "@${user!!.username}",
-                                        color = Color(0xFF00E5FF),
+                                        color = Color.Cyan,
                                         fontSize = 16.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.padding(top = 2.dp, bottom = 2.dp),
-                                        style = MaterialTheme.typography.bodyLarge
+                                        modifier = Modifier.padding(top = 4.dp)
                                     )
                                 }
-                                // Email
+
                                 Text(
                                     user!!.email ?: "No Email",
                                     color = Color.Gray,
-                                    fontSize = 15.sp,
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Spacer(Modifier.height(16.dp))
-                                // KYC Status
-                                KycStatusSection(
-                                    kycStatus = user!!.kycStatus,
-                                    onCompleteKyc = { navController.navigate(ScreenRoutes.KycScreen) }
+                                    fontSize = 14.sp,
+                                    modifier = Modifier.padding(top = 3.dp)
                                 )
                             }
                         }
-                    }
-                    item {
-                        // Stats Section
-                        Card(
-                            modifier = Modifier
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
-                                .fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF181A20))
-                        ) {
-                            Column(Modifier.padding(20.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.EmojiEvents, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(22.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Gaming Stats", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                                }
-                                Spacer(Modifier.height(16.dp))
-                                StatsGrid(
-                                    matches = user!!.matchesPlayed,
-                                    wins = user!!.matchesWon,
-                                    earnings = user!!.totalEarnings,
-                                    tournaments = user!!.tournamentsJoined
-                                )
-                            }
-                        }
-                    }
-                    item {
-                        // Action Buttons
-                        Spacer(Modifier.height(16.dp))
+
+                        Spacer(modifier = Modifier.height(48.dp))
+
+                        // Version Info
+                        Text(
+                            text = "App Version 1.0.0",
+                            color = Color.Gray,
+                            fontSize = 13.sp,
+                            modifier = Modifier.align(Alignment.CenterHorizontally)
+                        )
+
+                        Spacer(modifier = Modifier.height(80.dp)) // Spacer before edit profile section
+
+                        // Action Buttons at the bottom
                         ActionButtons(
                             isEditing = editName,
                             onEdit = { editName = true },
@@ -270,19 +215,20 @@ fun ProfileScreenUI(
                                     }
                                 }
                             },
-                            onAchievements = { /* TODO: Navigate to achievements */ },
                             onCancel = { editName = false }
                         )
-                        Spacer(Modifier.height(32.dp))
+
+                        Spacer(modifier = Modifier.height(24.dp))
                     }
                 }
-            }
-            else -> {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("No user data available.", color = Color.Gray)
+
+                else -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("No user data available.", color = Color.Gray)
+                    }
                 }
             }
         }
@@ -296,7 +242,6 @@ private fun GradientProfilePicture(
     contentDescription: String,
     onClick: () -> Unit
 ) {
-    // Sweep gradient border
     Box(
         modifier = Modifier
             .size(size)
@@ -304,7 +249,7 @@ private fun GradientProfilePicture(
             .background(Color.Transparent)
             .semantics { this.contentDescription = contentDescription }
     ) {
-        androidx.compose.foundation.Canvas(modifier = Modifier.matchParentSize()) {
+        Canvas(modifier = Modifier.matchParentSize()) {
             drawArc(
                 brush = Brush.sweepGradient(
                     listOf(Color(0xFF00E5FF), Color(0xFFAA00FF), Color(0xFF00E5FF))
@@ -312,9 +257,10 @@ private fun GradientProfilePicture(
                 startAngle = 0f,
                 sweepAngle = 360f,
                 useCenter = false,
-                style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round)
+                style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round)
             )
         }
+
         Box(
             modifier = Modifier
                 .padding(6.dp)
@@ -329,14 +275,10 @@ private fun GradientProfilePicture(
             contentAlignment = Alignment.Center
         ) {
             if (imageUrl.isNotBlank()) {
-                AsyncImage(
-                    model = imageUrl,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize()
-                )
+                AsyncImage(model = imageUrl, contentDescription = null, modifier = Modifier.fillMaxSize())
             } else {
                 Icon(
-                    imageVector = Icons.Default.Person,
+                    Icons.Default.Person,
                     contentDescription = null,
                     tint = Color.LightGray,
                     modifier = Modifier.size(size * 0.6f)
@@ -360,32 +302,32 @@ private fun AnimatedNameField(
         OutlinedTextField(
             value = newName,
             onValueChange = onNameChange,
-            label = { Text("Name") },
+            label = { Text("Full Name") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             textStyle = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
         )
         Row(
-            modifier = Modifier.padding(top = 8.dp),
+            modifier = Modifier.padding(top = 10.dp),
             horizontalArrangement = Arrangement.Center
         ) {
-            TextButton(onClick = onSave) { Text("Save Changes") }
-            Spacer(Modifier.width(8.dp))
-            TextButton(onClick = onCancel) { Text("Cancel") }
+            TextButton(onClick = onSave) {
+                Text("Save", color = Color.Cyan, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.width(10.dp))
+            TextButton(onClick = onCancel) {
+                Text("Cancel", color = Color.Red, fontWeight = FontWeight.Bold)
+            }
         }
     } else {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 name.ifBlank { "No Name" },
                 fontWeight = FontWeight.Bold,
                 fontSize = 24.sp,
                 color = Color.White,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.headlineMedium
+                overflow = TextOverflow.Ellipsis
             )
             IconButton(onClick = onEditClick) {
                 Icon(Icons.Default.Edit, contentDescription = "Edit display name", tint = Color.Cyan)
@@ -395,157 +337,42 @@ private fun AnimatedNameField(
 }
 
 @Composable
-private fun KycStatusSection(kycStatus: String, onCompleteKyc: () -> Unit) {
-    val (color, label) = when (kycStatus.lowercase()) {
-        "verified" -> Pair(Color(0x3300C853), "Verified")
-        "pending" -> Pair(Color(0x33FFAB00), "Pending")
-        "not_submitted" -> Pair(Color(0x33D50000), "Not Submitted")
-        "rejected" -> Pair(Color(0x33D50000), "Rejected")
-        "in_review" -> Pair(Color(0x332979FF), "In Review")
-        else -> Pair(Color(0x33D50000), kycStatus.capitalize())
-    }
-    val isClickable = kycStatus.lowercase() != "verified"
-    Surface(
-        color = color,
-        shape = RoundedCornerShape(24.dp),
-        modifier = Modifier
-            .padding(vertical = 8.dp)
-            .fillMaxWidth()
-            .semantics { contentDescription = "KYC status bar: $label" }
-            .then(if (isClickable) Modifier.clickable(onClick = onCompleteKyc) else Modifier)
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-        ) {
-            // KYC Icon
-            Icon(
-                imageVector = Icons.Filled.VerifiedUser, // Use a shield or ID card icon
-                contentDescription = "KYC",
-                tint = Color(0xFF00E5FF),
-                modifier = Modifier.size(22.dp)
-            )
-            Spacer(Modifier.width(8.dp))
-            // KYC Label
-            Text("KYC Status:", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-            Spacer(Modifier.width(8.dp))
-            // Status Chip
-            StatusChip(label)
-            if (kycStatus.lowercase() != "verified") {
-                Spacer(Modifier.width(12.dp))
-                Button(
-                    onClick = onCompleteKyc,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF)),
-                    contentPadding = ButtonDefaults.ContentPadding,
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Text("Complete KYC", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StatusChip(label: String) {
-    Surface(
-        color = when (label.lowercase()) {
-            "verified" -> Color(0x3300C853)
-            "pending" -> Color(0x33FFAB00)
-            "not_submitted" -> Color(0x33D50000)
-            "rejected" -> Color(0x33D50000)
-            "in_review" -> Color(0x332979FF)
-            else -> Color(0x33D50000)
-        },
-        shape = RoundedCornerShape(24.dp),
-        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-    ) {
-        Text(label, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 14.sp)
-    }
-}
-
-@Composable
-private fun StatsGrid(matches: Int, wins: Int, earnings: Double, tournaments: Int) {
-    val stats = listOf(
-        Triple("Matches Played", matches, Icons.Default.Gamepad),
-        Triple("Wins", wins, Icons.Default.EmojiEvents),
-        Triple("Total Earnings", earnings, Icons.Default.MonetizationOn),
-        Triple("Tournaments", tournaments, Icons.Default.CalendarToday)
-    )
-    // Responsive: 2 columns on phone, 4 on tablet
-    val columns = if (LocalDensity.current.run { 600.dp.toPx() } < androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp) 4 else 2
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceEvenly
-    ) {
-        stats.forEach { (label, value, icon) ->
-            StatCard(label, value.toString(), icon)
-        }
-    }
-}
-
-@Composable
-private fun StatCard(label: String, value: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
-    Card(
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, Color(0xFF23272F)),
-        modifier = Modifier
-            .padding(8.dp)
-            .width(90.dp)
-            .height(90.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF23272F))
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Icon(icon, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(24.dp))
-            Spacer(Modifier.height(6.dp))
-            Text(value, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
-            Text(label, color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-        }
-    }
-}
-
-@Composable
 private fun ActionButtons(
     isEditing: Boolean,
     onEdit: () -> Unit,
     onSave: () -> Unit,
-    onAchievements: () -> Unit,
     onCancel: () -> Unit
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Button(
             onClick = if (isEditing) onSave else onEdit,
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Brush.horizontalGradient(
-                    listOf(Color(0xFF00E5FF), Color(0xFFAA00FF))
-                ).toBrushColor()
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(54.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Cyan)
+        ) {
+            Text(
+                if (isEditing) "Save Changes" else "Edit Profile",
+                color = Color.Black,
+                fontWeight = FontWeight.Bold
             )
-        ) {
-            Text(if (isEditing) "Save Changes" else "Edit Profile", color = Color.White, fontWeight = FontWeight.Medium)
         }
-        OutlinedButton(
-            onClick = onAchievements,
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            border = BorderStroke(1.dp, Color(0xFF00E5FF)),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF))
-        ) {
-            Text("View Achievements", color = Color(0xFF00E5FF), fontWeight = FontWeight.Medium)
+
+        if (isEditing) {
+            OutlinedButton(
+                onClick = onCancel,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(54.dp),
+                border = BorderStroke(1.dp, Color.Cyan),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Cyan)
+            ) {
+                Text("Cancel", color = Color.Cyan, fontWeight = FontWeight.Bold)
+            }
         }
-        // Optionally add a Logout button here if desired
     }
 }
-
-// Helper to convert Brush to Color for Button background
-private fun Brush.toBrushColor(): Color = Color.Unspecified // Compose limitation: use solid color or custom background

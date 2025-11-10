@@ -11,6 +11,10 @@ sealed class ScreenRoutes {
     @Serializable
     data object RegisterScreen
 
+    // ⭐ NEW: Screen to wait for user to click verification link
+    @Serializable
+    data object VerificationPendingScreen
+
     // Main Screens
     @Serializable
     data object TournamentsScreen
@@ -87,4 +91,3 @@ sealed class Screen(val route: String) {
         fun createRoute(tournamentId: String) = "victory_pass/$tournamentId"
     }
 }
-

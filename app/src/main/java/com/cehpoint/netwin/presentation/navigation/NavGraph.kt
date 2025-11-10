@@ -40,6 +40,7 @@ fun NavGraph(firebaseManager: FirebaseManager) {
     val profileViewModel: ProfileViewModel = hiltViewModel()
     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
     val isAuthStateInitialized by authViewModel.isAuthStateInitialized.collectAsState()
+    val currentUser by authViewModel.currentUser.collectAsState()
     val shouldRecheckProfile by profileViewModel.shouldRecheckProfile.collectAsState()
 
     Log.d("NavGraph", "NavGraph - isAuthenticated: $isAuthenticated")
@@ -48,6 +49,8 @@ fun NavGraph(firebaseManager: FirebaseManager) {
 
     // Simple state management
     var profileComplete by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    // NEW STATE: Check if user is authenticated AND verified
+    val isVerified = currentUser?.isEmailVerified ?: false
 
     Log.d("NavGraph", "NavGraph - profileComplete: $profileComplete")
 
@@ -60,6 +63,7 @@ fun NavGraph(firebaseManager: FirebaseManager) {
     )
 
     val currentDestinationAsState = navController.currentBackStackEntryAsState()
+    // The current destination route is often retrieved from the destination itself for string routes
     val currentDestination = currentDestinationAsState.value?.destination?.route
     val shouldShowBottomBar = remember { mutableStateOf(true) }
 
@@ -68,67 +72,117 @@ fun NavGraph(firebaseManager: FirebaseManager) {
         Log.d("NavGraph", "Current destination: $currentDestination")
     }
 
+    // ⭐ Define canonical route names for reliable comparison
+    val VERIFICATION_PENDING_ROUTE = "com.cehpoint.netwin.presentation.navigation.ScreenRoutes.VerificationPendingScreen"
+    val LOGIN_ROUTE = "com.cehpoint.netwin.presentation.navigation.ScreenRoutes.LoginScreen"
+    val REGISTER_ROUTE = "com.cehpoint.netwin.presentation.navigation.ScreenRoutes.RegisterScreen"
+
+
     // Single LaunchedEffect to handle all auth and profile logic
-    LaunchedEffect(isAuthenticated, isAuthStateInitialized, shouldRecheckProfile) {
+    LaunchedEffect(isAuthenticated, isAuthStateInitialized, isVerified, shouldRecheckProfile) {
         Log.d("NavGraph", "=== LaunchedEffect TRIGGERED ===")
         Log.d("NavGraph", "LaunchedEffect - isAuthenticated: $isAuthenticated")
         Log.d("NavGraph", "LaunchedEffect - isAuthStateInitialized: $isAuthStateInitialized")
+        Log.d("NavGraph", "LaunchedEffect - isVerified: $isVerified")
         Log.d("NavGraph", "LaunchedEffect - shouldRecheckProfile: $shouldRecheckProfile")
 
         if (!isAuthStateInitialized) {
             Log.d("NavGraph", "LaunchedEffect - Auth state not initialized yet, waiting...")
-            // Still loading
             return@LaunchedEffect
         }
 
         if (!isAuthenticated) {
             Log.d("NavGraph", "LaunchedEffect - User not authenticated, resetting profile complete")
-            // User not authenticated
             profileComplete = null
+
+            // ⭐ FIX APPLIED HERE:
+            // Check if the current destination is NOT one of the explicit Auth Screens (Login, Register, VerificationPending)
+            val isCurrentlyOnAuthScreen = currentDestination?.contains("LoginScreen") == true ||
+                    currentDestination?.contains("RegisterScreen") == true ||
+                    currentDestination?.contains("VerificationPendingScreen") == true
+
+            if (currentDestination != null && !isCurrentlyOnAuthScreen) {
+
+                // If the user is unauthenticated and we are on a non-Auth screen, navigate to the Auth graph.
+                navController.navigate(SubNavigation.AuthNavGraph) {
+
+                    // Use SubNavigation.AuthNavGraph as the anchor type for popUpTo
+                    popUpTo(SubNavigation.AuthNavGraph) {
+                        inclusive = true
+                    }
+                    launchSingleTop = true
+                }
+            }
             return@LaunchedEffect
         }
 
-        // User is authenticated, check profile completeness
-        if (profileComplete == null || shouldRecheckProfile) {
-            Log.d("NavGraph", "LaunchedEffect - Checking profile completeness")
+        // ⭐ FIX: If authenticated but NOT verified, navigate to pending screen
+        // Use the defined canonical route names for comparison
+        if (isAuthenticated && !isVerified &&
+            currentDestination != VERIFICATION_PENDING_ROUTE) {
 
-            // Add a small delay to ensure NavHost is ready
-            delay(100)
+            Log.d("NavGraph", "LaunchedEffect - User authenticated but NOT verified, navigating to VerificationPendingScreen")
+            navController.navigate(ScreenRoutes.VerificationPendingScreen) {
+                // FIX: Use the serializable object directly for popUpTo
+                popUpTo(ScreenRoutes.LoginScreen) { inclusive = false }
+                launchSingleTop = true
+            }
+            return@LaunchedEffect
+        }
 
-            profileViewModel.isProfileCompleteAsync { complete ->
-                profileComplete = complete
-                Log.d("NavGraph", "LaunchedEffect - Profile completeness result: $complete")
+        // If authenticated AND verified, proceed to check profile completeness
+        if (isAuthenticated && isVerified) {
+            if (profileComplete == null || shouldRecheckProfile) {
+                Log.d("NavGraph", "LaunchedEffect - Checking profile completeness")
 
-                // Navigate to ProfileSetupScreen if profile is incomplete
-                if (complete == false) {
-                    Log.d("NavGraph", "LaunchedEffect - Profile incomplete, navigating to ProfileSetupScreen")
-                    navController.navigate(ScreenRoutes.ProfileSetupScreen) {
-                        popUpTo(SubNavigation.HomeNavGraph) { inclusive = true }
-                        launchSingleTop = true
+                delay(100)
+
+                profileViewModel.isProfileCompleteAsync { complete ->
+                    profileComplete = complete
+                    Log.d("NavGraph", "LaunchedEffect - Profile completeness result: $complete")
+
+                    if (complete == false) {
+                        Log.d("NavGraph", "LaunchedEffect - Profile incomplete, navigating to ProfileSetupScreen")
+                        navController.navigate(ScreenRoutes.ProfileSetupScreen) {
+                            // FIX: Use the serializable object directly for popUpTo
+                            popUpTo(SubNavigation.HomeNavGraph) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    } else if (currentDestination == VERIFICATION_PENDING_ROUTE ||
+                        currentDestination == LOGIN_ROUTE ||
+                        currentDestination == REGISTER_ROUTE) {
+                        // Profile is complete and we are stuck on an Auth screen, navigate home.
+                        navController.navigate(SubNavigation.HomeNavGraph) {
+                            // FIX: Use the serializable object directly for popUpTo
+                            popUpTo(SubNavigation.AuthNavGraph) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    }
+
+                    if (shouldRecheckProfile) {
+                        Log.d("NavGraph", "LaunchedEffect - Resetting recheck profile flag")
+                        profileViewModel.resetRecheckProfile()
                     }
                 }
-
-                if (shouldRecheckProfile) {
-                    Log.d("NavGraph", "LaunchedEffect - Resetting recheck profile flag")
-                    profileViewModel.resetRecheckProfile()
-                }
+            } else {
+                Log.d("NavGraph", "LaunchedEffect - Profile already checked, no need to recheck")
             }
-        } else {
-            Log.d("NavGraph", "LaunchedEffect - Profile already checked, no need to recheck")
         }
     }
 
     // Handle bottom bar visibility
-    LaunchedEffect(currentDestination) {
+    LaunchedEffect(currentDestination, isVerified) {
         val hideBottomBarRoutes = listOf(
             "TournamentDetails",
             "ProfileSetupScreen",
             "KycScreen",
-            "VictoryPass"
+            "VictoryPass",
+            // Use the simple name string for comparison here, which is usually included in the route string
+            "VerificationPendingScreen"
         )
         shouldShowBottomBar.value = hideBottomBarRoutes.none { route ->
             currentDestination?.contains(route) == true
-        } && isAuthenticated
+        } && isAuthenticated && isVerified
     }
 
     Box {
@@ -138,10 +192,10 @@ fun NavGraph(firebaseManager: FirebaseManager) {
                 Log.d("NavGraph", "Bottom bar visibility check:")
                 Log.d("NavGraph", "  - shouldShowBottomBar: ${shouldShowBottomBar.value}")
                 Log.d("NavGraph", "  - isAuthenticated: $isAuthenticated")
-                Log.d("NavGraph", "  - profileComplete: $profileComplete")
-                Log.d("NavGraph", "  - Will show bottom bar: ${shouldShowBottomBar.value && isAuthenticated}")
+                Log.d("NavGraph", "  - isVerified: $isVerified")
+                Log.d("NavGraph", "  - Will show bottom bar: ${shouldShowBottomBar.value && isAuthenticated && isVerified}")
 
-                if (shouldShowBottomBar.value && isAuthenticated) {
+                if (shouldShowBottomBar.value && isAuthenticated && isVerified) {
                     NavigationBar(
                         containerColor = Color.Black,
                         tonalElevation = 0.dp,
@@ -152,6 +206,7 @@ fun NavGraph(firebaseManager: FirebaseManager) {
                     ) {
                         items.forEachIndexed { index, bottomNavigationItem ->
                             val isSelected = when (index) {
+                                // Checking containment is fine for string-based route matching
                                 0 -> currentDestination?.contains("TournamentsScreen") == true && !currentDestination.contains("MyTournamentsScreen")
                                 1 -> currentDestination?.contains("MyTournamentsScreen") == true
                                 2 -> currentDestination?.contains("WalletScreen") == true
@@ -164,6 +219,7 @@ fun NavGraph(firebaseManager: FirebaseManager) {
                                 selected = isSelected,
                                 onClick = {
                                     when (index) {
+                                        // FIX: Use the serializable object directly for popUpTo
                                         0 -> navController.navigate(ScreenRoutes.TournamentsScreen) {
                                             popUpTo(ScreenRoutes.TournamentsScreen) { inclusive = true }
                                             launchSingleTop = true
@@ -186,48 +242,17 @@ fun NavGraph(firebaseManager: FirebaseManager) {
                                         }
                                     }
                                 },
-//                                 icon = {
-//                                     Column(
-//                                         horizontalAlignment = Alignment.CenterHorizontally,
-//                                         verticalArrangement = Arrangement.Center
-//                                     ) {
-//                                         if (isSelected) {
-//                                             Spacer(modifier = Modifier.height(0.dp))
-//                                             Box(
-//                                                 modifier = Modifier
-//                                                     .width(60.dp)  // Set width to icon size or a bit wider
-//                                                     .height(30.dp)  // Bar thickness
-//                                                     .padding(bottom = 26.dp)
-//                                                     .background(
-//                                                         color = Color.Cyan,
-//                                                         shape = RoundedCornerShape(2.dp) // Rounded ends
-//                                                     )
-//                                             )
-////                                             Spacer(modifier = Modifier.height(26.dp))
-//                                         } else {
-//                                             Spacer(modifier = Modifier.height(8.dp)) // Keep all icons aligned
-//                                         }
-//                                         Icon(
-//                                             imageVector = bottomNavigationItem.icon,
-//                                             contentDescription = bottomNavigationItem.name,
-//                                             tint = if (isSelected) Color.Cyan else Color.White,
-//                                             modifier = Modifier.size(24.dp)
-//                                         )
-//                                     }
-//                                 },
-
-
                                 icon = {
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .height(70.dp) // same height as NavigationBar
+                                            .height(70.dp)
                                     ) {
                                         if (isSelected) {
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .height(40.dp) // Reaches from top down to icon
+                                                    .height(40.dp)
                                                     .align(Alignment.TopCenter)
                                                     .background(
                                                         brush = Brush.verticalGradient(
@@ -244,7 +269,6 @@ fun NavGraph(firebaseManager: FirebaseManager) {
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.TopCenter)
-//                                                     .width(40.dp)
                                                     .fillMaxWidth()
                                                     .height(4.dp)
                                                     .background(
@@ -265,18 +289,12 @@ fun NavGraph(firebaseManager: FirebaseManager) {
                                     }
                                 },
 
-                                alwaysShowLabel = false, // Hide labels for a cleaner look
+                                alwaysShowLabel = false,
 
                                 colors = NavigationBarItemDefaults.colors(
                                     indicatorColor = Color.Transparent
-                                ) // removes the gray background
+                                )
                             )
-
-
-
-
-
-
                         }
                     }
                 }
@@ -299,14 +317,10 @@ fun NavGraph(firebaseManager: FirebaseManager) {
                 val startDestination = when {
                     !isAuthenticated -> {
                         Log.d("NavGraph", "NavHost - Start destination: AuthNavGraph (not authenticated)")
-                        Log.d("NavGraph", "NavHost - Reason: isAuthenticated = $isAuthenticated")
                         SubNavigation.AuthNavGraph
                     }
                     else -> {
-                        // If user is authenticated, always go to HomeNavGraph
-                        // Profile completeness will be checked and handled within HomeNavGraph
                         Log.d("NavGraph", "NavHost - Start destination: HomeNavGraph (authenticated)")
-                        Log.d("NavGraph", "NavHost - Reason: isAuthenticated = $isAuthenticated, profileComplete = $profileComplete")
                         SubNavigation.HomeNavGraph
                     }
                 }
@@ -315,50 +329,38 @@ fun NavGraph(firebaseManager: FirebaseManager) {
 
                 NavHost(
                     navController = navController,
-                    startDestination = startDestination
+                    startDestination = startDestination,
+                    Modifier.padding(innerPadding)
                 ) {
                     navigation<SubNavigation.AuthNavGraph>(startDestination = ScreenRoutes.LoginScreen) {
                         composable<ScreenRoutes.LoginScreen> {
                             LoginScreenUI(
                                 navController = navController,
                                 firebaseManager = firebaseManager,
-//                                onLoginSuccess = {
-//                                    // Navigate to Tournaments screen after successful login
-//                                    navController.navigate(ScreenRoutes.TournamentsScreen) {
-//                                        popUpTo(SubNavigation.AuthNavGraph) { inclusive = true }
-//                                    }
-//                                }
                             )
                         }
                         composable<ScreenRoutes.RegisterScreen> {
                             RegisterScreenUI(
                                 navController = navController,
-//                                onRegisterSuccess = {
-//                                    // Navigate to Tournaments screen after successful registration
-//                                    navController.navigate(ScreenRoutes.TournamentsScreen) {
-//                                        popUpTo(SubNavigation.AuthNavGraph) { inclusive = true }
-//                                    }
-//                                }
                             )
                         }
+                        // NEW ROUTE: Verification Pending Screen
+                        composable<ScreenRoutes.VerificationPendingScreen> {
+                            VerificationPendingScreen(navController = navController)
+                        }
                     }
-//                     }
 
                     navigation<SubNavigation.HomeNavGraph>(startDestination = ScreenRoutes.TournamentsScreen) {
                         composable<ScreenRoutes.TournamentsScreen> {
                             LegacyTournamentsScreenUI(
                                 navController = navController,
-//                                 onNavigateToMyTournaments = {
-//                                     navController.navigate(ScreenRoutes.MyTournamentsScreen) {
-//                                         launchSingleTop = true
-//                                     }
-//                                 }
                             )
                         }
 
                         composable<ScreenRoutes.MyTournamentsScreen> {
                             MyTournamentsScreen(
                                 onNavigateToTournaments = {
+                                    // FIX: Use the serializable object directly for popUpTo
                                     navController.navigate(ScreenRoutes.TournamentsScreen) {
                                         popUpTo(ScreenRoutes.TournamentsScreen) { inclusive = true }
                                         launchSingleTop = true
@@ -391,7 +393,6 @@ fun NavGraph(firebaseManager: FirebaseManager) {
                                 paymentMethod = com.cehpoint.netwin.data.model.PaymentMethod.UPI,
                                 upiAppPackage = paymentProofScreen.upiAppPackage,
                                 onSubmitProof = { proof ->
-                                    // Handle proof submission
                                     navController.popBackStack()
                                 },
                                 onDismiss = {
@@ -414,18 +415,8 @@ fun NavGraph(firebaseManager: FirebaseManager) {
                         composable<ScreenRoutes.ProfileSetupScreen> {
                             ProfileSetupScreenUI(navController = navController)
                         }
+
                         // Tournament Details Screen
-//                         composable(
-//                             route = Screen.TournamentDetails.route,
-//                             arguments = listOf(navArgument("tournamentId") { type = NavType.StringType })
-//                         ) { backStackEntry ->
-//                             val tournamentId = backStackEntry.arguments?.getString("tournamentId") ?: return@composable
-//                             TournamentDetailsScreenUI(
-//                                 tournamentId = tournamentId,
-//                                 navController = navController,
-//                                 onBackClick = { navController.popBackStack() }
-//                             )
-//                         }
                         composable(
                             route = Screen.TournamentDetails.route,
                             arguments = listOf(
@@ -451,13 +442,10 @@ fun NavGraph(firebaseManager: FirebaseManager) {
                             val tournamentId = backStackEntry.arguments?.getString("tournamentId") ?: return@composable
                             VictoryPassScreen(
                                 tournamentId = tournamentId,
-                                // ⭐️ UPDATED: Navigate to TournamentsScreen and clear the back stack
                                 onBackClick = {
+                                    // FIX: Use the serializable object directly for popUpTo
                                     navController.navigate(ScreenRoutes.TournamentsScreen) {
-                                        // Pop up to the Tournaments screen (or MyTournamentsScreen)
-                                        // to clear any details/pass screens related to this tournament
                                         popUpTo(ScreenRoutes.TournamentsScreen) {
-                                            // Make sure to remove the current VictoryPass screen and any previous detail screens
                                             inclusive = true
                                         }
                                         launchSingleTop = true

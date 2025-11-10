@@ -36,6 +36,10 @@ dependencies {
     // Add any utility dependencies here
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    implementation(libs.firebase.auth)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
+    implementation(libs.googleid)
 
     // Dependencies related to Compose
     val composeBom = platform("androidx.compose:compose-bom:2024.06.00")

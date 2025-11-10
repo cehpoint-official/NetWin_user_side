@@ -15,11 +15,11 @@
       },
       "oauth_client": [
         {
-          "client_id": "842283500427-dkk98euhd2a8plc3vpm8gomavphrrk89.apps.googleusercontent.com",
+          "client_id": "842283500427-j67sfkt6qhae9k0t2h446k2d954qjkhl.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.cehpoint.netwin",
-            "certificate_hash": "8aaace556102756f7ecaa96d9aa5065eb3b156bb"
+            "certificate_hash": "487b29838853b4f2d189d58e74c3e9e769cfb77b"
           }
         },
         {

@@ -39,4 +39,4 @@ class AuthRepositoryImpl @Inject constructor(
 
     override suspend fun signOut(): Result<Unit> =
         firebaseManager.signOut()
-} 
+}

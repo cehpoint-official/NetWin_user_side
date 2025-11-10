@@ -95,7 +95,7 @@ object NGNTransactionUtils {
     /**
      * NEW: Formats a currency amount with the correct symbol and removes unnecessary trailing decimals.
      * This is the new standard function for displaying money in the UI.
-     * Example: formatAmountTidy(5000.0, "INR") -> "₹5000"
+     * Example: formatAmountTidy(5000.0, "INR") -> "$5000"
      * Example: formatAmountTidy(10.50, "NGN") -> "₦10.5"
      */
     fun formatAmountTidy(amount: Double, currency: String): String {
