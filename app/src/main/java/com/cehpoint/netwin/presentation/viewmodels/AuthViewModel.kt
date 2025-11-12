@@ -294,12 +294,13 @@ class AuthViewModel @Inject constructor(
                             try {
                                 val fullPhoneNumber = countryCode + phoneNumber
                                 val userProfile = hashMapOf(
-                                    "id" to uid,
+                                    // ❌ REMOVED redundant "id" field to prevent CustomClassMapper runtime error
+                                    "uid" to uid,
                                     "email" to email,
                                     "phone" to fullPhoneNumber,
                                     "isEmailVerified" to false,
                                     "createdAt" to com.google.firebase.Timestamp.now()
-                                    // Add other default fields here (e.g., username, profilePictureUrl, etc. if needed)
+                                    // Add other default fields here (e.g., username, displayName, profileImage, etc. if needed)
                                 )
                                 FirebaseFirestore.getInstance().collection("users").document(uid).set(userProfile).await()
                                 Log.d("AuthViewModel", "User profile saved to Firestore for $uid")
@@ -563,14 +564,15 @@ class AuthViewModel @Inject constructor(
                 }
                 // 3. Create user profile in Firestore (ALWAYS use registration state, not just Auth fields)
                 val userProfile = hashMapOf(
-                    "id" to uid,
+                    // ❌ REMOVED redundant "id" field to prevent CustomClassMapper runtime error
+                    "uid" to uid,
                     "email" to state.email,
                     "username" to state.username,
                     "displayName" to state.displayName,
                     "country" to state.country,
                     "currency" to if (state.country == "IN") "INR" else "NGN",
                     "phone" to state.country + state.phone, // ⭐ Combined Phone Number
-                    "profilePictureUrl" to (profilePictureUrl ?: state.profilePictureUri ?: ""),
+                    "profileImage" to (profilePictureUrl ?: state.profilePictureUri ?: ""), // Changed key from profilePictureUrl
                     "kycStatus" to "pending",
                     "createdAt" to com.google.firebase.Timestamp.now()
                     // ...add other fields as needed

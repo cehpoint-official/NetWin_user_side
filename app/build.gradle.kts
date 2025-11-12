@@ -212,4 +212,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
+
+    implementation("com.google.firebase:firebase-appcheck-playintegrity")
+    debugImplementation("com.google.firebase:firebase-appcheck-debug")
 }

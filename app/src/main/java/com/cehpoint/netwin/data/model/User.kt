@@ -2,16 +2,30 @@ package com.cehpoint.netwin.data.model
 
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentId
+import com.google.firebase.firestore.PropertyName
 
 data class User(
+    // ⭐ FIX 1: Use DocumentId on a dedicated, unique property name
+    // to avoid collision with the 'id' field present in the document data.
+    // However, since the error states 'id' was found, we will use 'documentId'
+    // and rely on the database field 'uid' for the actual user ID if needed,
+    // or simply rely on the documentId.
     @DocumentId
-    val id: String = "",
+    val documentId: String = "",
+
+    // Keeping 'uid' for compatibility, though it is usually redundant if documentId is used.
     val uid: String = "",
     val email: String = "",
     val username: String = "",
     val displayName: String? = null,
-    val photoURL: String? = null,
-    val phoneNumber: String? = null,
+
+    // ⭐ FIX 3: Renamed photoURL/phoneNumber fields to match common Firestore convention
+    @PropertyName("profileImage") // Assuming your database uses 'profileImage'
+    val profileImage: String? = null,
+
+    @PropertyName("phone") // ⭐ CRITICAL FIX: Match the database field name 'phone'
+    val phone: String? = null,
+
     val gameId: String? = null,
     val gameMode: String? = null,
     val country: String = "",
@@ -24,14 +38,17 @@ data class User(
     val updatedAt: Timestamp? = null,
     // Optional/admin/Firestore-only fields
     val lastLogin: Timestamp? = null,
+
+    @PropertyName("isEmailVerified") // Assuming your database uses 'isEmailVerified'
     val isVerified: Boolean = false,
+
     val kycDocuments: KycDocuments? = null,
     val status: String = "active",
     val location: String? = null
 ) {
     companion object {
         fun fromFirestore(
-            id: String,
+            id: String, // Kept to receive the document ID if mapping manually
             uid: String,
             email: String,
             username: String,
@@ -55,13 +72,13 @@ data class User(
             location: String? = null
         ): User {
             return User(
-                id = id,
+                documentId = id, // Map document ID to the new field
                 uid = uid,
                 email = email,
                 username = username,
                 displayName = displayName,
-                photoURL = photoURL,
-                phoneNumber = phoneNumber,
+                profileImage = photoURL, // Mapping from old param to new field
+                phone = phoneNumber, // Mapping from old param to new field
                 gameId = gameId,
                 gameMode = gameMode,
                 country = country,
@@ -87,8 +104,8 @@ data class User(
             "email" to email,
             "username" to username,
             "displayName" to displayName,
-            "photoURL" to photoURL,
-            "phoneNumber" to phoneNumber,
+            "profileImage" to profileImage, // Changed from photoURL
+            "phone" to phone,             // Changed from phoneNumber
             "gameId" to gameId,
             "gameMode" to gameMode,
             "country" to country,
@@ -100,7 +117,7 @@ data class User(
             "createdAt" to createdAt,
             "updatedAt" to updatedAt,
             "lastLogin" to lastLogin,
-            "isVerified" to isVerified,
+            "isEmailVerified" to isVerified, // Match DB field name (if different from isVerified)
             "kycDocuments" to kycDocuments?.toMap(),
             "status" to status,
             "location" to location
@@ -130,4 +147,4 @@ data class KycDocuments(
             )
         }
     }
-} 
+}

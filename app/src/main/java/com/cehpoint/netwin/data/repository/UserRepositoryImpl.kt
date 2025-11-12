@@ -28,12 +28,13 @@ class UserRepositoryImpl @Inject constructor(
     // Convert domain User to data User
     private fun User.toDataUser(): DataUser {
         return DataUser(
-            id = id,
+            // ⭐ FIX: Rely only on 'id' and 'documentId'. Removed 'uid' usage here.
+            documentId = id,
             username = username,
-            displayName = displayName ?: "", // domain has displayName, data has name
+            displayName = displayName ?: "",
             email = email,
-            phoneNumber = phoneNumber,
-            photoURL = profilePictureUrl,
+            phone = phoneNumber,
+            profileImage = profilePictureUrl,
             walletBalance = walletBalance,
             isVerified = false, // default value
             kycStatus = kycStatus,
@@ -48,14 +49,15 @@ class UserRepositoryImpl @Inject constructor(
     // Convert data User to domain User
     private fun DataUser.toDomainUser(): User {
         return User(
-            id = id,
-            displayName = displayName ?: "", // data has name, domain has displayName
+            // ⭐ FIX: Rely only on 'id' and 'documentId'. Removed 'uid' usage here.
+            id = documentId,
+            displayName = displayName ?: "",
             username = username,
             email = email,
             country = location ?: "", // data has location, domain has country
             currency = "", // default value
             walletBalance = walletBalance,
-            profilePictureUrl = photoURL ?: "",
+            profilePictureUrl = profileImage ?: "",
             role = "user", // default value
             createdAt = createdAt?.toDate()?.time,
 //            createdAt = this.createdAt?.let { Timestamp(it, 0) },
@@ -63,7 +65,7 @@ class UserRepositoryImpl @Inject constructor(
             lastLoginAt = lastLogin?.toDate()?.time,
 //            lastLoginAt = this.lastLogin?.let { Timestamp(it, 0) },
             loginCount = 0, // default value
-            phoneNumber = phoneNumber ?: "",
+            phoneNumber = phone ?: "",
             gameId = "", // default value
             gameMode = "", // default value
             matchesPlayed = 0, // default value
@@ -133,10 +135,10 @@ class UserRepositoryImpl @Inject constructor(
         val docSnapshot = usersCollection.document(userId).get().await()
         Log.d("UserRepositoryImpl", "getUser - Firestore document fetched: exists = ${docSnapshot.exists()}")
         Log.d("UserRepositoryImpl", "getUser - Document data: ${docSnapshot.data}")
-        
+
         val dataUser = docSnapshot.toObject(DataUser::class.java)
         Log.d("UserRepositoryImpl", "getUser - Parsed user object: $dataUser")
-        
+
         if (dataUser != null) {
             val user = dataUser.toDomainUser()
             Log.d("UserRepositoryImpl", "getUser - User found successfully")
@@ -226,4 +228,4 @@ class UserRepositoryImpl @Inject constructor(
             false // treat as not found on error
         }
     }
-} 
+}

@@ -19,7 +19,15 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import androidx.compose.ui.Modifier
 import com.cehpoint.netwin.presentation.viewmodels.AuthViewModel
+import com.google.firebase.BuildConfig
 import com.google.firebase.auth.FirebaseAuth
+
+// ⭐ NEW APP CHECK IMPORTS
+import com.google.firebase.Firebase
+import com.google.firebase.appcheck.appCheck
+import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
+import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
+import com.google.firebase.initialize
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -38,6 +46,26 @@ class MainActivity : ComponentActivity() {
 
         Log.d("MainActivity", "=== MainActivity onCreate STARTED ===")
         Log.d("MainActivity", "MainActivity - savedInstanceState: $savedInstanceState")
+
+        // 1. Initialize Firebase App (must run before App Check or Hilt access)
+        Firebase.initialize(this)
+
+        // ⭐ CRITICAL FIX: Implement conditional App Check initialization
+        // This ensures Play Integrity is used on physical devices, relying on your registered SHA keys.
+        val providerFactory = if (BuildConfig.DEBUG) {
+            // In DEBUG mode, prefer the Play Integrity provider
+            // unless specifically forced to use Debug for certain CI/Emulator tests.
+            // Using Play Integrity here requires the DEBUG SHA-256 key to be registered.
+            PlayIntegrityAppCheckProviderFactory.getInstance()
+            // OR use DebugAppCheckProviderFactory.getInstance() if you absolutely must use debug tokens
+        } else {
+            // In RELEASE mode, always use the secure provider.
+            PlayIntegrityAppCheckProviderFactory.getInstance()
+        }
+
+        Firebase.appCheck.installAppCheckProviderFactory(providerFactory)
+        Log.d("MainActivity", "App Check initialized with provider: ${providerFactory.javaClass.simpleName}")
+
 
         enableEdgeToEdge()
         WindowCompat.setDecorFitsSystemWindows(window, false)
